@@ -31,6 +31,7 @@ Status key:
 | 19 | "Any agent" writes `incidents` | This contradicts "only hub and leader write the board". | The agent proposes, and a hub rule commits immediately with the agent recorded as author and `via: hub`. | Refinement | [0007](adr/0007-two-section-kinds-and-registry.md) |
 | 20 | Opening a PR and posting test results have no dedicated tool | The model needs a clear, schema-checked way to do both. | `board_propose('artifacts', 'open', {kind: 'change_request', …})` opens a CR. Review and test outcomes go through `respond(request_id, result)` with a required `headSha`. No new tools. | Refinement | [0008](adr/0008-local-git-host-and-change-requests.md) |
 | 21 | Package names `mcp-client/`, `human-app/` | "MCP client" is misleading: the package is an MCP *server* and a hub client. Also, the domain logic needs a home without IO. | Packages are `protocol`, `core` (new, pure), `hub`, `agent` (`rt-agent`), `cli` (new), `app`, `testkit`. | Deviation (adopted) | — |
+| 22 | "Bring your own: any MCP client joins the hub" | Timeouts, `tools/list_changed`, server instructions and config files differ per client; S0 verified them only for Claude Code. | **Client profiles** in rt-agent: `rt agent install --client` writes each client's project config. Unverified clients get the safe defaults: `wait` under 50 s, static tool lists with hub-enforced roles, and a briefing in the first tool result. | Refinement | [0014](adr/0014-any-mcp-client.md) |
 
 ## S0 results
 

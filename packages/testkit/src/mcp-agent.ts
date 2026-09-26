@@ -20,7 +20,7 @@ export class McpAgent {
     this.keyStore = keyStore;
   }
 
-  static async start(t: TestHub, options: { slot?: string; keyStore?: KeyStore; waitMaxMs?: number } = {}): Promise<McpAgent> {
+  static async start(t: TestHub, options: { slot?: string; keyStore?: KeyStore; waitMaxMs?: number; tools?: 'dynamic' | 'static'; briefing?: boolean } = {}): Promise<McpAgent> {
     const keyStore = options.keyStore ?? new MemoryKeyStore();
     const bridge = new AgentBridge({
       slot: options.slot ?? 'a',
@@ -30,6 +30,8 @@ export class McpAgent {
       waitMaxMs: options.waitMaxMs ?? 1_000,
       now: () => t.clock.now(),
       reconnect: { initialMs: 10, maxMs: 50 },
+      ...(options.tools && { tools: options.tools }),
+      ...(options.briefing !== undefined && { briefing: options.briefing }),
     });
     const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'test-client', version: '0.0.0' });

@@ -16,7 +16,7 @@ import { inboxBanner, STATUS_PREFIX } from './banner.ts';
 import { formatItems, formatResult, type WaitItem } from './format.ts';
 import { HubClient, HubError } from '@round-table/protocol';
 import type { Identity } from './identity.ts';
-import { PAIRED_WELCOME, serverInstructions } from './instructions.ts';
+import { briefing, PAIRED_WELCOME, serverInstructions, TOOL_DESCRIPTIONS } from './instructions.ts';
 import type { KeyStore, PendingJoin } from './keystore.ts';
 
 export interface BridgeOptions {
@@ -25,8 +25,15 @@ export interface BridgeOptions {
   keyStore: KeyStore;
   /** The agent's client, e.g. `claude-code`; shown to the human at pairing. */
   clientName: string;
-  /** Longest wait: below the client's tool timeout (S0: 50 s by default, 240 s with rt agent install). */
+  /** Longest wait: below the client's tool timeout (S0: 50 s by default, 240 s where install raises it). */
   waitMaxMs: number;
+  /**
+   * 'dynamic': tools appear per role via tools/list_changed (verified for Claude Code).
+   * 'static': every tool is always listed and the hub enforces who may call what (ADR-0014).
+   */
+  tools?: 'dynamic' | 'static';
+  /** Add the protocol briefing to the first tool result, for clients that may not show server instructions. */
+  briefing?: boolean;
   now?: () => number;
   log?: (message: string) => void;
   /** Reconnect backoff after the hub connection drops. */
@@ -44,6 +51,15 @@ const FILLED: Record<string, string[]> = {
 };
 
 const ACTIVITY_DUE_MS = 5 * 60_000;
+const PAIRING_TOOLS = new Set(['join_request', 'join_confirm', 'rejoin']);
+
+/** Catalog summary plus who may call it, so a static tool list still tells the model what applies to it. */
+function describe(def: ProcedureDef): string {
+  const allow = def.allow as readonly string[];
+  if (allow.includes('leader') && !allow.includes('worker')) return `Leader only. ${def.summary}`;
+  if (allow.includes('worker') && !allow.includes('leader')) return `Workers only. ${def.summary}`;
+  return def.summary;
+}
 
 /**
  * rt-agent (architecture §2): an MCP stdio server for one agent session and a hub client.
@@ -66,12 +82,15 @@ export class AgentBridge {
   /** Deliveries handed to the model and not yet acked, with their priority (acked on the next wait). */
   private handed = new Map<number, Priority>();
   private lastActivityAt: number;
+  private briefed = false;
   private reconnectDelay: number;
 
   constructor(options: BridgeOptions) {
     this.options = {
       now: () => Date.now(),
       reconnect: { initialMs: 500, maxMs: 15_000 },
+      tools: 'dynamic',
+      briefing: false,
       ...options,
     };
     this.lastActivityAt = this.options.now();
@@ -174,7 +193,7 @@ export class AgentBridge {
     const input = z.object(Object.fromEntries(Object.entries(shape).filter(([key]) => !hidden.has(key))));
     const tool = this.server.registerTool(
       def.name,
-      { description: def.summary, inputSchema: input },
+      { description: TOOL_DESCRIPTIONS[def.name] ?? describe(def), inputSchema: input },
       async (args: Record<string, unknown>) => this.call(def.name, args),
     );
     this.tools.set(def.name, tool);
@@ -184,6 +203,7 @@ export class AgentBridge {
   private applyRole(): void {
     let visible: Set<string>;
     if (this.fenced) visible = new Set();
+    else if (this.options.tools === 'static') visible = new Set(this.tools.keys());
     else if (this.role !== 'unpaired') visible = new Set(mcpToolsFor(this.role as PrincipalKind).map((p) => p.name));
     else if (this.identity) visible = new Set(['rejoin']);
     else visible = new Set(['join_request', 'join_confirm']);
@@ -198,9 +218,17 @@ export class AgentBridge {
       if (this.fenced) throw new HubError('fenced', 'this session was replaced by a newer one with the same identity; stop working in this session');
       const hub = this.hub;
       if (!hub) throw new HubError('internal', 'the Round Table hub is unreachable; rt-agent keeps retrying. Try again shortly.');
+      if (this.role === 'unpaired' && !PAIRING_TOOLS.has(name)) {
+        throw new HubError('forbidden', this.identity ? 'not connected to the hub yet; try again shortly' : 'not paired yet: call join_request first');
+      }
       const text = await this.dispatch(hub, name, args);
       const status = await this.statusLine(hub, name);
-      return { content: [{ type: 'text' as const, text: status ? `${text}\n\n${status}` : text }] };
+      const parts = [text, status];
+      if (this.options.briefing && !this.briefed) {
+        parts.push(briefing(Math.round(this.options.waitMaxMs / 1000)));
+        this.briefed = true;
+      }
+      return { content: [{ type: 'text' as const, text: parts.filter(Boolean).join('\n\n') }] };
     } catch (error) {
       const e = error instanceof HubError ? error : new HubError('internal', errorText(error));
       const reason = e.rejection ? `${e.rejection}: ${e.message}` : `${e.code}: ${e.message}`;

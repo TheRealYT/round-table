@@ -49,8 +49,8 @@ flowchart LR
 | Process | One per | Job |
 |---|---|---|
 | **rt-hub** | machine | Owns the event log, the command bus, projections, delivery, the scheduler, git and test runs. Serves `/agent` (WS), `/app` (WS), and HTTP for the static app, `/login` and `/export/*`. Binds to 127.0.0.1 only. |
-| **rt-agent** | agent session | The spec's "MCP client". It is an MCP **server** (stdio, started by the agent's client) and a hub **client**. It owns the private key, auto-rejoin, the session epoch, delivery acks, the transport heartbeat, the inbox banner and the local hook socket. |
-| **rt** CLI | on demand | `rt hub start`; `rt agent install --client claude-code --slot A --repo <path>` (creates the worktree and writes the MCP config and hooks); `rt hook <event>` (the hook adapter entrypoint); `rt supervise` (restarts dead sessions, D3). |
+| **rt-agent** | agent session | The spec's "MCP client". It is an MCP **server** (stdio, started by any MCP client) and a hub **client**. A client profile sets its wait cap, tool-list mode and briefing ([ADR-0014](adr/0014-any-mcp-client.md)). It owns the private key, auto-rejoin, the session epoch, delivery acks, the transport heartbeat, the inbox banner and the local hook socket. |
+| **rt** CLI | on demand | `rt hub start`; `rt agent install --client <claude-code\|codex\|gemini\|opencode\|cursor\|vscode\|generic> --slot A --dir <path>` (writes that client's MCP config; see [ADR-0014](adr/0014-any-mcp-client.md)); `rt hook <event>` (the hook adapter entrypoint); `rt supervise` (restarts dead sessions, D3). |
 | **Human app** | browser tab | A Vite + React SPA served by the hub. It uses web APIs only. It is the only way to act as the human. |
 
 ---

@@ -151,4 +151,25 @@ describe('S1 rt-agent over MCP', () => {
     await t.human.call('human.post', { projectId, to: 'all', body: 'still there?' });
     expect(await a.call('wait')).toContain('still there?');
   });
+
+  it('works for clients without list_changed or instructions: static tools, hub-enforced roles, briefing once (ADR-0014)', async () => {
+    t = await TestHub.start();
+    const a = await start({ tools: 'static', briefing: true });
+    const all = await a.tools();
+    expect(all).toEqual(expect.arrayContaining(['join_request', 'wait', 'claim', 'board_commit']));
+    const desc = (await a.client.listTools()).tools;
+    expect(desc.find((x) => x.name === 'board_commit')?.description).toMatch(/^Leader only\./);
+    expect(desc.find((x) => x.name === 'wait')?.description).toContain('[Round Table]');
+
+    expect(await a.call('wait')).toContain('not paired yet: call join_request first');
+    const { projectId } = await pairViaMcp(a, 'Codex A', { newProjectName: 'P' });
+    expect(await a.tools()).toEqual(all); // nothing changes; no list_changed needed
+    expect(await a.call('board_commit', { ticketId: 'tkt_00000000000000000000000001' })).toMatch(/^ERROR .*forbidden: worker may not call board_commit/);
+
+    // The briefing rides on the first successful call of a session (here join_request), once.
+    await t.human.call('human.post', { projectId, to: 'all', body: 'hi' });
+    expect(await a.call('wait')).not.toContain('briefing');
+    const b = await start({ slot: 'b', tools: 'static', briefing: true });
+    expect(await b.call('join_request', { name: 'Gemini B' })).toContain('[Round Table] briefing');
+  });
 });

@@ -59,7 +59,7 @@ try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'README.md'), `Scratch workspace for Round Table agent ${slot}.\n`);
     log(`rt agent install --slot ${slot}`);
-    console.log(rt(['agent', 'install', '--slot', slot, '--dir', dir, '--hub', `ws://127.0.0.1:${PORT}`]));
+    console.log(rt(['agent', 'install', '--client', 'claude-code', '--slot', slot, '--dir', dir, '--hub', `ws://127.0.0.1:${PORT}`]));
   }
 
   async function pair(slot: 'a' | 'b', name: string, project: { newName: string } | { existing: string }) {

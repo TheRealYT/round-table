@@ -14,9 +14,11 @@ Slices S0 and S1 are built ([build plan](docs/architecture/build-plan.md)). Agen
 ```sh
 pnpm install && pnpm --filter @round-table/app build
 node packages/cli/src/main.ts hub start          # prints a one-time login link for the app
-node packages/cli/src/main.ts agent install --slot a --dir ~/work/agent-a
-cd ~/work/agent-a && claude                      # then: /mcp__roundtable__join
+node packages/cli/src/main.ts agent install --client claude-code --slot a --dir ~/work/agent-a
+cd ~/work/agent-a && claude                      # then say: join the Round Table
 ```
+
+Any MCP client works: `--client` accepts `claude-code`, `codex`, `gemini`, `opencode`, `cursor`, `vscode` or `generic` (prints a snippet for anything else). See [ADR-0014](docs/architecture/adr/0014-any-mcp-client.md) for what is verified per client.
 
 ## Layout
 

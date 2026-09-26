@@ -15,5 +15,6 @@
 | [0011](0011-procedure-catalog-over-rest.md) | One procedure catalog for agents and the human app |
 | [0012](0012-security-boundary-and-threat-model.md) | Security boundary, threat model, keys and hooks |
 | [0013](0013-vertical-slices.md) | Build in vertical slices, spikes first |
+| [0014](0014-any-mcp-client.md) | Any MCP client, through client profiles |
 
 New decisions get the next number. A decision that deviates from the spec also gets a row in [spec-gaps.md](../spec-gaps.md) and needs the human's approval.
