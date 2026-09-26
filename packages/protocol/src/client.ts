@@ -1,4 +1,5 @@
-import { PROTOCOL_VERSION, type ErrorCode, type Frame, type Transport } from '@round-table/protocol';
+import { PROTOCOL_VERSION, type ErrorCode, type Frame } from './frame.ts';
+import type { Transport } from './transport.ts';
 
 export class HubError extends Error {
   readonly code: ErrorCode;
@@ -16,7 +17,7 @@ export class HubError extends Error {
   }
 }
 
-/** Request/response and pushed events over one Transport. Used by rt-agent, the CLI and tests. */
+/** Request/response and pushed events over one Transport. Used by rt-agent, the human app and tests. */
 export class HubClient {
   private readonly transport: Transport;
   private readonly pending = new Map<string, { resolve(v: unknown): void; reject(e: Error): void }>();

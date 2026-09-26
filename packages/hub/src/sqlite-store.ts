@@ -107,6 +107,13 @@ export class SqliteEventStore implements EventStore {
       .map(toRow);
   }
 
+  /** The newest `limit` events of one stream, oldest first. */
+  tail(stream: StreamId, limit: number): EventRow[] {
+    return this.sql
+      .all<RawRow>('SELECT * FROM (SELECT * FROM events WHERE stream = ? ORDER BY sseq DESC LIMIT ?) ORDER BY sseq', [stream, limit])
+      .map(toRow);
+  }
+
   /** Every event in global order, for loading the write model at startup. */
   *all(batch = 5_000): Generator<EventRow> {
     let after = 0;

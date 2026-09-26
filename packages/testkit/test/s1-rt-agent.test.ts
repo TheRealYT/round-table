@@ -99,6 +99,22 @@ describe('S1 rt-agent over MCP', () => {
     expect(await restarted.call('wait')).toContain('welcome back');
   });
 
+  it('finishes pairing after an rt-agent restart between join_request and the code', async () => {
+    t = await TestHub.start();
+    const keyStore = new MemoryKeyStore();
+    const first = await start({ slot: 'a', keyStore });
+    const requested = await first.call('join_request', { name: 'A' });
+    const phrase = /match phrase: (\S+)/.exec(requested)?.[1];
+    await first.close();
+    agents.splice(agents.indexOf(first), 1);
+    const list = await t.human.call<{ requests: Array<{ requestId: string; matchPhrase: string }> }>('pairing.list');
+    const request = list.requests.find((r) => r.matchPhrase === phrase)!;
+    const { code, projectId } = await t.human.call<{ code: string; projectId: string }>('pairing.allow', { requestId: request.requestId, newProjectName: 'P' });
+
+    const restarted = await start({ slot: 'a', keyStore });
+    expect(await restarted.call('join_confirm', { code })).toContain(`worker in project ${projectId}`);
+  });
+
   it('shows leader tools when the human assigns the leader role', async () => {
     t = await TestHub.start();
     const a = await start();

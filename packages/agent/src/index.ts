@@ -4,7 +4,7 @@ export * from './keystore.ts';
 export * from './file-keystore.ts';
 export * from './memory-keystore.ts';
 export * from './banner.ts';
-export * from './hub-client.ts';
+export { HubClient, HubError } from '@round-table/protocol';
 export * from './auth.ts';
 export * from './format.ts';
 export * from './instructions.ts';

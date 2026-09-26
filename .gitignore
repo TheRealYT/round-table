@@ -7,3 +7,5 @@ coverage/
 .rt/
 spikes/**/out/
 .DS_Store
+test-results/
+playwright-report/

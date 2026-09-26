@@ -58,11 +58,13 @@ export class Router {
         }
         return { section: 'roster', records: Object.values(hub.model.projects[projectId as never]?.roster ?? {}) };
       },
-      'logs.query': (session, input: { projectId: string; filter: { sinceSeq?: number; types?: string[] }; limit: number }) => {
+      'logs.query': (session, input: { projectId: string; filter: { sinceSeq?: number; types?: string[]; last?: boolean }; limit: number }) => {
         const projectId = this.projectFor(session, input.projectId);
+        const stream = `project:${projectId}` as StreamId;
         const since = typeof input.filter.sinceSeq === 'number' ? input.filter.sinceSeq : 0;
         const types = Array.isArray(input.filter.types) ? new Set(input.filter.types) : undefined;
-        const rows = hub.store.read(`project:${projectId}` as StreamId, since, input.limit);
+        // `last: true` returns the newest events (the Feed); otherwise events after sinceSeq (the Logs view).
+        const rows = input.filter.last === true ? hub.store.tail(stream, input.limit) : hub.store.read(stream, since, input.limit);
         return { events: types ? rows.filter((r: EventRow) => types.has(r.type)) : rows };
       },
       wait: (session, input: { timeoutMs?: number; ack: number[] }) => this.wait(session, input),

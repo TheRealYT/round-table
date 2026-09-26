@@ -10,3 +10,4 @@ export * from './events.ts';
 export * from './entry.ts';
 export * from './sections.ts';
 export * from './procedures.ts';
+export * from './client.ts';

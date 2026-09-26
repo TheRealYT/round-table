@@ -8,7 +8,7 @@ import {
   verifyMessage,
   type KeyPair,
 } from '@round-table/protocol/crypto';
-import { HubError, type HubClient } from './hub-client.ts';
+import { HubError, type HubClient } from '@round-table/protocol';
 import type { Identity } from './identity.ts';
 
 export interface HubInfo {

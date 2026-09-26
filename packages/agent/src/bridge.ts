@@ -11,14 +11,13 @@ import {
   type ProcedureDef,
   type TransportConnector,
 } from '@round-table/protocol';
-import { authenticate, confirmJoin, requestJoin, type HubInfo, type JoinRequestResult, type SessionInfo } from './auth.ts';
+import { authenticate, confirmJoin, requestJoin, type HubInfo, type SessionInfo } from './auth.ts';
 import { inboxBanner, STATUS_PREFIX } from './banner.ts';
 import { formatItems, formatResult, type WaitItem } from './format.ts';
-import { HubClient, HubError } from './hub-client.ts';
+import { HubClient, HubError } from '@round-table/protocol';
 import type { Identity } from './identity.ts';
 import { PAIRED_WELCOME, serverInstructions } from './instructions.ts';
-import type { KeyStore } from './keystore.ts';
-import type { KeyPair } from '@round-table/protocol/crypto';
+import type { KeyStore, PendingJoin } from './keystore.ts';
 
 export interface BridgeOptions {
   slot: string;
@@ -62,7 +61,7 @@ export class AgentBridge {
   private session: SessionInfo | undefined;
   private fenced = false;
   private closed = false;
-  private pendingJoin: { key: KeyPair; request: JoinRequestResult } | undefined;
+  private pendingJoin: PendingJoin | undefined;
   private counts: InboxCounts = zeroCounts();
   /** Deliveries handed to the model and not yet acked, with their priority (acked on the next wait). */
   private handed = new Map<number, Priority>();
@@ -219,13 +218,17 @@ export class AgentBridge {
           tags: (args.tags as string[] | undefined) ?? [],
           capabilities: (args.capabilities as string[] | undefined) ?? [],
         });
+        await this.options.keyStore.savePending(this.options.slot, this.pendingJoin);
         return `Join request sent. Show the human this match phrase: ${this.pendingJoin.request.matchPhrase}
 They will check it in the Round Table app, click Allow, and paste an 8-character code into this chat. Then call join_confirm with that code.`;
       }
       case 'join_confirm': {
+        // After an rt-agent restart the pending request comes back from the key store.
+        this.pendingJoin ??= this.hubInfo ? await this.options.keyStore.loadPending(this.hubInfo.hubId, this.options.slot) : undefined;
         if (!this.pendingJoin) throw new HubError('invalid_input', 'call join_request first');
         const identity = await confirmJoin(hub, this.pendingJoin, String(args.code), this.options.now());
         await this.options.keyStore.save(this.options.slot, identity);
+        await this.options.keyStore.clearPending(identity.hubId, this.options.slot);
         this.identity = identity;
         this.pendingJoin = undefined;
         await this.authenticate();

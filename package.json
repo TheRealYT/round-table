@@ -10,9 +10,14 @@
     "typecheck": "pnpm -r --workspace-concurrency=1 typecheck",
     "test": "vitest run",
     "check:deps": "node scripts/check-deps.ts",
-    "check": "pnpm check:deps && pnpm typecheck && pnpm test"
+    "check": "pnpm check:deps && pnpm typecheck && pnpm test",
+    "e2e": "pnpm --filter @round-table/app build && playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@round-table/agent": "workspace:*",
+    "@round-table/hub": "workspace:*",
+    "@round-table/protocol": "workspace:*",
     "@types/node": "^24.0.0",
     "typescript": "^6.0.3",
     "vitest": "^5.0.2"
