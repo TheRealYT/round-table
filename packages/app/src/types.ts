@@ -52,6 +52,8 @@ export interface RosterRecord {
   attention?: { lastCallAt: number; waiting: boolean; stopped: boolean } | null;
   /** Human view only: what the Round Table is telling this agent to do next. */
   next?: { tool: string; step: string } | null;
+  /** Human view only: set for agents the hub runs (ADR-0018). */
+  driven?: DrivenInfo | null;
 }
 
 export interface LogEvent {
@@ -63,4 +65,67 @@ export interface LogEvent {
   via: string;
   ts: number;
   payload: Record<string, unknown>;
+}
+
+export type RunStatus = 'starting' | 'working' | 'idle' | 'stopped' | 'crashed';
+
+export interface LiveState {
+  status: RunStatus;
+  since: number;
+  lastError: string | null;
+  tool: string | null;
+}
+
+/** Human view of a hub-run agent (ADR-0018), on roster records. */
+export interface DrivenInfo {
+  providerId: string;
+  run: boolean;
+  turns: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  lastTurnAt: number | null;
+  live: LiveState;
+}
+
+export interface ProviderKindDef {
+  kind: string;
+  label: string;
+  binary: string;
+  apiKeyEnv: string;
+  login: string;
+  install: string;
+  driverVerified: boolean;
+  models: readonly string[];
+}
+
+export interface ProviderSettings {
+  kind: string;
+  label: string;
+  command: string;
+  auth: 'cli-login' | 'api-key';
+  model: string;
+  extraArgs: string[];
+  maxInstances: number;
+}
+
+export interface ProviderRecord {
+  providerId: string;
+  settings: ProviderSettings;
+  hasSecret: boolean;
+  createdAt: number;
+  running: number;
+  agents: Array<{ agentId: string; name: string; projectId: string; run: boolean; costUsd: number; live: LiveState | null }>;
+}
+
+export interface ProviderList {
+  kinds: ProviderKindDef[];
+  canRun: boolean;
+  providers: ProviderRecord[];
+}
+
+export interface TranscriptEntry {
+  at: number;
+  kind: 'to_agent' | 'text' | 'tool' | 'turn' | 'status';
+  text: string;
 }

@@ -13,10 +13,11 @@ const SLOT = 'agent';
  */
 export class FolderAgentHost implements AgentHost {
   private readonly dataDir: string;
-  private readonly hubUrl: string;
+  private readonly hubUrl: string | (() => string);
   private readonly rtAgent: string[];
 
-  constructor(options: { dataDir: string; hubUrl: string; rtAgent: string[] }) {
+  /** `hubUrl` may be a function when the port is known only after the hub listens. */
+  constructor(options: { dataDir: string; hubUrl: string | (() => string); rtAgent: string[] }) {
     this.dataDir = options.dataDir;
     this.hubUrl = options.hubUrl;
     this.rtAgent = options.rtAgent;
@@ -42,7 +43,7 @@ export class FolderAgentHost implements AgentHost {
       cwd,
       mcp: {
         command: command!,
-        args: [...args, 'agent', 'run', '--slot', SLOT, '--hub', this.hubUrl, '--driven'],
+        args: [...args, 'agent', 'run', '--slot', SLOT, '--hub', typeof this.hubUrl === 'string' ? this.hubUrl : this.hubUrl(), '--driven'],
         env: { RT_HOME: this.home(agent.agentId) },
       },
     };

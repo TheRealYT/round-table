@@ -117,6 +117,19 @@ describe('the supervisor runs the agents (ADR-0018)', () => {
     expect(ada.sent).toHaveLength(3); // then left idle for the human to see
   });
 
+  it('tells an agent when its role changes, as its next turn', async () => {
+    const { driver, projectId, providerId } = await setup();
+    const { started } = await spawn(projectId, providerId, ['Lead']);
+    await expect.poll(() => driver.started.length).toBe(1);
+    const lead = driver.started[0]!;
+    expect(lead.last).toContain('the worker on project');
+    await t.human.call('leader.assign', { projectId, agentId: started[0]!.agentId });
+    lead.endTurn();
+    await expect.poll(() => lead.sent.length).toBe(2);
+    expect(lead.last).toContain('Your role changed: you are now the leader');
+    expect(lead.last).toContain('You never write code');
+  });
+
   it('restarts a crashed agent by resuming its session, and gives up after the backoff runs out', async () => {
     const { driver, projectId, providerId } = await setup();
     const { started } = await spawn(projectId, providerId, ['Ada']);

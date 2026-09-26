@@ -49,6 +49,8 @@ interface Live extends LiveState {
   restartTimer: ReturnType<typeof setTimeout> | undefined;
   /** Bumped on each start, so events from an old process are ignored. */
   generation: number;
+  /** Hub notices for the next turn (e.g. a role change), ahead of messages. */
+  notices: string[];
 }
 
 export interface SupervisorOptions {
@@ -89,6 +91,11 @@ export class Supervisor {
   onCommit(rows: EventRow[]): void {
     for (const row of rows) {
       if (row.type === 'agent.run_requested') this.reconcile((row.payload as { agentId: string }).agentId, true);
+      if (row.type === 'roster.role_changed') {
+        const { agentId, role } = row.payload as { agentId: string; role: string };
+        const live = this.live.get(agentId);
+        if (live) live.notices.push(`[Round Table] Your role changed: you are now the ${role}. ${roleBrief(role)}`);
+      }
     }
     this.queuePump();
   }
@@ -152,7 +159,7 @@ export class Supervisor {
   private entry(agentId: string): Live {
     let live = this.live.get(agentId);
     if (!live) {
-      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, transcript: [], lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0 };
+      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, transcript: [], lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0, notices: [] };
       this.live.set(agentId, live);
     }
     return live;
@@ -279,7 +286,7 @@ export class Supervisor {
   private pump(agentId: string, live: Live): void {
     const agent = this.o.model.agents[agentId as AgentId];
     if (!agent) return;
-    const messages = this.takeMessages(agentId, live);
+    const messages = [...live.notices.splice(0), this.takeMessages(agentId, live)].filter(Boolean).join('\n') || undefined;
     const step = nextStep(this.o.model, agent.projectId, agent.agentId);
     if (messages) {
       // Messages, then what the board wants next, so the turn ends with a clear step.
@@ -309,6 +316,7 @@ export class Supervisor {
     const goal = Object.values(project?.entries ?? {}).find((e) => e.section === 'goal')?.data as { objective?: string } | undefined;
     const step = nextStep(this.o.model, agent.projectId, agent.agentId);
     const live = this.entry(agentId);
+    live.notices = []; // the kickoff states the current role
     const messages = this.takeMessages(agentId, live);
     const lines = resumed
       ? [`[Round Table] The Round Table restarted you. You are still ${agent.name}, the ${role}, on project "${project?.name ?? agent.projectId}". Carry on from where you were.`]
