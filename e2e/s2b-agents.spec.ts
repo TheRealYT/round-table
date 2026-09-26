@@ -16,7 +16,8 @@ test('the human sets up a provider, starts two agents from it and watches them a
   await human.call('project.create', { name: 'Checkout' });
 
   await page.goto(h.loginUrl());
-  await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+  await page.locator('.nav-item', { hasText: 'Agents' }).click();
+  await expect(page.getByRole('heading', { name: 'Providers and agents' })).toBeVisible();
   await page.getByRole('button', { name: /Claude Code/ }).click();
   await page.getByLabel('Model').fill('sonnet');
   await page.getByLabel('Agents at once').fill('2');
@@ -39,21 +40,27 @@ test('the human sets up a provider, starts two agents from it and watches them a
   await card.getByRole('button', { name: 'Test sign-in' }).click();
   await expect(card.getByRole('status')).toContainText('Signed in and answering');
 
-  await card.getByLabel('Names, one agent each').fill('Ada, Bo');
-  await card.getByRole('button', { name: 'Start 2 agents' }).click();
-  await expect(card.getByText('Started Ada, Bo')).toBeVisible();
+  // Start agents: the sheet suggests two names (the limit is 2).
+  await card.getByRole('button', { name: 'Start agents' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Start agents' });
+  await expect(sheet.getByLabel('Name 1')).toHaveValue('Ada');
+  await expect(sheet.getByLabel('Name 2')).toHaveValue('Bo');
+  await sheet.getByRole('button', { name: 'Start 2 agents' }).click();
+  await expect(page.locator('.toast', { hasText: 'Started Ada, Bo' })).toBeVisible();
   await expect.poll(() => driver.started.length).toBe(2);
   expect(driver.started[0]!.options.model).toBe('sonnet');
   expect(driver.started[0]!.options.env).toEqual({ ANTHROPIC_BASE_URL: 'https://llm.internal.example/v1', ANTHROPIC_AUTH_TOKEN: 'tok-123' });
-  await expect(card.locator('tbody tr')).toHaveCount(2);
 
   // A third would exceed the limit of 2.
-  await card.getByLabel('Names, one agent each').fill('Cy');
-  await card.getByRole('button', { name: 'Start 1 agent' }).click();
-  await expect(card.getByText(/Cy: .*2 of 2/)).toBeVisible();
+  await page.getByRole('button', { name: 'Start agents' }).first().click();
+  await sheet.getByLabel('Name 1').fill('Cy');
+  await sheet.getByRole('button', { name: 'Start 1 agent' }).click();
+  await expect(page.locator('.toast', { hasText: /Cy: .*2 of 2/ })).toBeVisible();
+  await page.keyboard.press('Escape');
 
-  // The table: seats with live status, and a transcript for the selected agent.
+  // The table: seats with live status, and the full session of the selected agent.
   await page.locator('.nav-item', { hasText: 'Checkout' }).click();
+  await page.getByRole('tab', { name: /Table/ }).click();
   const ada = page.getByRole('button', { name: /^Ada, worker, working/ });
   await expect(ada).toBeVisible();
   const proc = driver.started[0]!;
@@ -62,7 +69,7 @@ test('the human sets up a provider, starts two agents from it and watches them a
   await expect(page.getByRole('button', { name: /^Ada, worker, idle/ })).toBeVisible();
   await page.getByRole('button', { name: /^Ada, worker/ }).click();
   const detail = page.getByLabel('Ada details');
-  await expect(detail.getByLabel('Ada transcript')).toContainText('board_view');
+  await expect(page.getByLabel('Ada transcript')).toContainText('board_view');
   await expect(detail).toContainText('$0.12');
 
   await detail.getByRole('button', { name: 'Stop' }).click();

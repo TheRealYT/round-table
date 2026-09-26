@@ -1,74 +1,96 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useState, useId, type ReactNode } from 'react';
 import { HubError } from '@round-table/protocol';
+import { Bot, ChevronRight, CircleCheck, CircleX, Cpu, FolderGit2, KeyRound, Pencil, Plus, Rocket, Square, Play, RotateCcw, Terminal, Trash2, Variable, Zap } from 'lucide-react';
+import { go } from '../App.tsx';
 import { useCommand, useHub, useQuery } from '../hub.tsx';
 import { duration, usd } from '../format.ts';
-import type { ReactNode } from 'react';
-import type { LiveState, ProjectSummary, ProviderKindDef, ProviderList, ProviderRecord, ProviderSettings, RosterRecord } from '../types.ts';
+import type { ProjectSummary, ProviderKindDef, ProviderList, ProviderRecord, ProviderSettings } from '../types.ts';
+import { Avatar, RunState, Sheet, useToast } from '../ui.tsx';
+import { ProviderLogo, StartAgentsSheet } from './StartAgents.tsx';
 
 /**
  * Agents (ADR-0018): set up each coding CLI once (a provider), then start as many agents from it
  * as a project needs. The hub runs them in their own worktrees and wakes them when there is work.
  */
-export function AgentsView({ onOpenProject }: { onOpenProject: (projectId: string) => void }) {
+export function AgentsView() {
   const { data, error } = useQuery<ProviderList>('provider.list', {}, { pollMs: 3_000 });
   const { data: projects } = useQuery<ProjectSummary[]>('project.list', {});
-  const [adding, setAdding] = useState(false);
-  if (!data) return <div className="view"><p className="muted">{error ?? 'Loading providers…'}</p></div>;
-  const none = data.providers.length === 0;
+  const [adding, setAdding] = useState<ProviderKindDef | true | false>(false);
+  const [starting, setStarting] = useState<string>();
+  if (!data) return <div className="page"><p className="muted">{error ?? 'Loading providers…'}</p></div>;
+  const agents = data.providers.flatMap((p) => p.agents);
+  const running = agents.filter((a) => a.run).length;
+  const spend = agents.reduce((n, a) => n + a.costUsd, 0);
 
   return (
-    <div className="view">
-      <header className="view-header">
+    <div className="page">
+      <header className="page-head">
         <div>
-          <h1>Agents</h1>
+          <div className="eyebrow"><Bot size={14} /> Agents</div>
+          <h1>Providers and agents</h1>
           <p className="lede">Set up each coding CLI once, then start as many agents from it as a project needs. The hub runs every agent in its own git worktree and wakes it when there is work. No chat window needed.</p>
         </div>
+        <div className="actions">
+          <button onClick={() => setAdding(true)}><Plus /> Add a provider</button>
+          <button className="primary" onClick={() => setStarting('')} disabled={data.providers.length === 0}><Rocket /> Start agents</button>
+        </div>
       </header>
-      {!data.canRun && (
-        <p className="nudge urgent" role="alert">This hub was started without an agent host, so it can’t run agents. Start it with <code>rt hub start</code>.</p>
+      {!data.canRun && <p className="nudge urgent" role="alert" style={{ marginBottom: 'var(--s-5)' }}>This hub was started without an agent host, so it can’t run agents. Start it with <code>rt hub start</code>.</p>}
+
+      {data.providers.length > 0 && (
+        <div className="statline">
+          <div className="stat"><span className="v">{data.providers.length}</span><span className="k"><Cpu /> providers</span></div>
+          <div className="stat"><span className="v">{running}<small>/{agents.length}</small></span><span className="k"><Bot /> agents running</span></div>
+          <div className="stat"><span className="v">{agents.filter((a) => a.live?.status === 'working').length}</span><span className="k"><Zap /> working now</span></div>
+          <div className="stat"><span className="v">{usd(spend)}</span><span className="k"><Terminal /> spent</span></div>
+        </div>
       )}
 
-      <section aria-labelledby="providers-h">
-        <div className="section-head">
-          <h2 id="providers-h">Providers</h2>
-          <span className="muted small">A provider is one CLI tool with its sign-in, model and a limit on how many agents run at once.</span>
-          {!adding && !none && <div className="actions"><button onClick={() => setAdding(true)}>Add a provider</button></div>}
-        </div>
-        {(adding || none) && <AddProvider kinds={data.kinds} onDone={() => setAdding(false)} canCancel={!none} />}
+      {data.providers.length === 0 ? (
+        <section className="section">
+          <div className="section-head"><h2>Pick the CLI your agents run on</h2></div>
+          <KindPicker kinds={data.kinds} onPick={(k) => setAdding(k)} />
+        </section>
+      ) : (
         <div className="providers">
           {data.providers.map((p) => (
-            <ProviderCard key={p.providerId} provider={p} kind={data.kinds.find((k) => k.kind === p.settings.kind)} projects={projects ?? []} canRun={data.canRun} onOpenProject={onOpenProject} />
+            <ProviderCard key={p.providerId} provider={p} kind={data.kinds.find((k) => k.kind === p.settings.kind)} projects={projects ?? []} canRun={data.canRun} onStart={() => setStarting(p.providerId)} />
           ))}
         </div>
-      </section>
+      )}
+      <AddProviderSheet open={adding !== false} initial={adding === true || adding === false ? undefined : adding} onClose={() => setAdding(false)} kinds={data.kinds} />
+      <StartAgentsSheet open={starting !== undefined} onClose={() => setStarting(undefined)} {...(starting ? { providerId: starting } : {})} />
     </div>
   );
 }
 
-// ── adding and editing ─────────────────────────────────────────────────────────────────
-
-function AddProvider({ kinds, onDone, canCancel }: { kinds: ProviderKindDef[]; onDone: () => void; canCancel: boolean }) {
-  const [kind, setKind] = useState<ProviderKindDef>();
+function KindPicker({ kinds, onPick, picked }: { kinds: ProviderKindDef[]; onPick: (k: ProviderKindDef) => void; picked?: string }) {
   return (
-    <div className="card stack" style={{ marginBottom: 'var(--space-5)' }}>
-      <div className="row">
-        <h3>{kind ? `Add ${kind.label}` : 'Which CLI should the agents run on?'}</h3>
-        {canCancel && <button className="ghost small" style={{ marginLeft: 'auto' }} onClick={onDone}>Cancel</button>}
-      </div>
-      {!kind ? (
-        <div className="kinds" role="group" aria-label="CLI tools">
-          {kinds.map((k) => (
-            <button key={k.kind} className="kind" aria-pressed={false} onClick={() => setKind(k)}>
-              <strong>{k.label}</strong>
-              <span className="mono small muted">{k.binary}</span>
-              {k.driverVerified ? <span className="chip ok">Ready to run agents</span> : <span className="chip" title="Round Table hasn’t verified how to drive this CLI yet. You can set it up now; starting agents unlocks once its check passes.">Setup only for now</span>}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <ProviderForm kind={kind} onSaved={onDone} onCancel={() => setKind(undefined)} />
-      )}
+    <div className="kinds" role="group" aria-label="CLI tools">
+      {kinds.map((k) => (
+        <button key={k.kind} className="kind" aria-pressed={picked === k.kind} onClick={() => onPick(k)}>
+          <ProviderLogo kind={k.kind} />
+          <strong>{k.label}</strong>
+          <span className="mono xs faint">{k.binary}</span>
+          {k.driverVerified ? <span className="badge good"><CircleCheck /> Ready to run agents</span> : <span className="badge" title="Round Table hasn’t verified how to drive this CLI yet. You can set it up now; starting agents unlocks once its check passes.">Setup only for now</span>}
+        </button>
+      ))}
     </div>
+  );
+}
+
+function AddProviderSheet({ open, onClose, kinds, initial }: { open: boolean; onClose: () => void; kinds: ProviderKindDef[]; initial?: ProviderKindDef }) {
+  const [kind, setKind] = useState<ProviderKindDef | undefined>(initial);
+  const toast = useToast();
+  useEffect(() => {
+    if (open) setKind(initial);
+  }, [open, initial]);
+  return (
+    <Sheet open={open} onClose={onClose} title={kind ? `Add ${kind.label}` : 'Add a provider'}>
+      {!kind ? <KindPicker kinds={kinds} onPick={setKind} /> : (
+        <ProviderForm kind={kind} onSaved={() => { toast(`${kind.label} added`); onClose(); }} onCancel={() => setKind(undefined)} />
+      )}
+    </Sheet>
   );
 }
 
@@ -115,7 +137,7 @@ function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKin
         </div>
         <div className="field">
           <label htmlFor={`${id}-cmd`}>Binary</label>
-          <input id={`${id}-cmd`} className="mono" value={s.command} placeholder={kind.binary} onChange={(e) => setS({ ...s, command: e.target.value })} />
+          <input id={`${id}-cmd`} className="mono-input" value={s.command} placeholder={kind.binary} onChange={(e) => setS({ ...s, command: e.target.value })} />
           <span className="hint">Leave empty to use <code>{kind.binary}</code> from the hub’s PATH.</span>
         </div>
         <div className="field">
@@ -128,7 +150,7 @@ function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKin
           <input id={`${id}-max`} type="number" min={1} max={20} value={s.maxInstances} onChange={(e) => setS({ ...s, maxInstances: Math.max(1, Math.min(20, Number(e.target.value) || 1)) })} />
         </div>
       </div>
-      <fieldset className="field" style={{ border: 'none', padding: 0, margin: 0 }}>
+      <fieldset className="field" >
         <legend className="label">Sign-in</legend>
         <div className="segmented">
           <label><input type="radio" name={`${id}-auth`} checked={s.auth === 'cli-login'} onChange={() => setS({ ...s, auth: 'cli-login' })} /> The CLI’s own login</label>
@@ -139,15 +161,15 @@ function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKin
       {s.auth === 'api-key' && (
         <div className="field" style={{ maxWidth: 460 }}>
           <label htmlFor={`${id}-key`}>{kind.apiKeyEnv}{provider?.hasSecret && <span className="faint"> · a key is set; enter a new one to replace it</span>}</label>
-          <input id={`${id}-key`} type="password" autoComplete="off" spellCheck={false} className="mono" value={key} onChange={(e) => setKey(e.target.value)} placeholder={provider?.hasSecret ? '••••••••••••' : 'Paste the key'} />
+          <input id={`${id}-key`} type="password" autoComplete="off" spellCheck={false} className="mono-input" value={key} onChange={(e) => setKey(e.target.value)} placeholder={provider?.hasSecret ? '••••••••••••' : 'Paste the key'} />
         </div>
       )}
       <EnvEditor kind={kind} rows={vars} onChange={setVars} error={varError} />
       <details>
-        <summary className="muted small">Advanced</summary>
-        <div className="field" style={{ marginTop: 'var(--space-3)' }}>
+        <summary><ChevronRight /> Advanced</summary>
+        <div className="field" style={{ marginTop: 'var(--s-3)' }}>
           <label htmlFor={`${id}-args`}>Extra arguments</label>
-          <input id={`${id}-args`} className="mono" value={args} onChange={(e) => setArgs(e.target.value)} placeholder="--max-turns 40" />
+          <input id={`${id}-args`} className="mono-input" value={args} onChange={(e) => setArgs(e.target.value)} placeholder="--max-turns 40" />
           <span className="hint">Added to every agent’s command line, separated by spaces.</span>
         </div>
       </details>
@@ -182,7 +204,7 @@ function EnvEditor({ kind, rows, onChange, error }: { kind: ProviderKindDef; row
   const id = useId();
   const set = (i: number, patch: Partial<EnvRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
-    <fieldset className="field env" style={{ border: 'none', padding: 0, margin: 0 }}>
+    <fieldset className="field env" >
       <legend className="label">Environment variables</legend>
       <span className="hint">Passed to every agent from this provider, e.g. an API endpoint or a proxy. Mark tokens as secret: their values are kept like the API key, never in the log.</span>
       {rows.length > 0 && (
@@ -190,11 +212,11 @@ function EnvEditor({ kind, rows, onChange, error }: { kind: ProviderKindDef; row
           {rows.map((r, i) => (
             <div className="env-row" key={i}>
               <label className="sr-only" htmlFor={`${id}-n${i}`}>Variable name</label>
-              <input id={`${id}-n${i}`} className="mono" list={`${id}-hints`} value={r.name} placeholder="NAME" spellCheck={false} onChange={(e) => set(i, { name: e.target.value })} />
+              <input id={`${id}-n${i}`} className="mono-input" list={`${id}-hints`} value={r.name} placeholder="NAME" spellCheck={false} onChange={(e) => set(i, { name: e.target.value })} />
               <label className="sr-only" htmlFor={`${id}-v${i}`}>Value of {r.name || 'the variable'}</label>
               <input
                 id={`${id}-v${i}`}
-                className="mono"
+                className="mono-input"
                 type={r.secret ? 'password' : 'text'}
                 autoComplete="off"
                 spellCheck={false}
@@ -203,14 +225,14 @@ function EnvEditor({ kind, rows, onChange, error }: { kind: ProviderKindDef; row
                 onChange={(e) => set(i, { value: e.target.value })}
               />
               <label className="env-secret"><input type="checkbox" checked={r.secret} onChange={(e) => set(i, { secret: e.target.checked, value: e.target.checked ? r.value : r.stored ? '' : r.value, stored: e.target.checked && r.stored })} /> secret</label>
-              <button type="button" className="ghost small" aria-label={`Remove ${r.name || 'variable'}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>Remove</button>
+              <button type="button" className="ghost sm" aria-label={`Remove ${r.name || 'variable'}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>Remove</button>
             </div>
           ))}
         </div>
       )}
       <datalist id={`${id}-hints`}>{kind.envHints.map((h) => <option key={h} value={h} />)}</datalist>
       {error && <p className="error">{error}</p>}
-      <div><button type="button" className="small" onClick={() => onChange([...rows, { name: '', value: '', secret: false, stored: false }])}>Add variable</button></div>
+      <div><button type="button" className="sm" onClick={() => onChange([...rows, { name: '', value: '', secret: false, stored: false }])}>Add variable</button></div>
     </fieldset>
   );
 }
@@ -233,12 +255,17 @@ function useOnce<T>(proc: string, input: Record<string, unknown>) {
     } finally {
       setBusy(false);
     }
-  }, [client, proc, key]);
+  }, [client, proc, key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => void run(), [run]);
   return { data, busy, run };
 }
 
-function ProviderCard({ provider, kind, projects, canRun, onOpenProject }: { provider: ProviderRecord; kind: ProviderKindDef | undefined; projects: ProjectSummary[]; canRun: boolean; onOpenProject: (id: string) => void }) {
+/** `code` spans in registry text. */
+function rich(text: string): ReactNode {
+  return text.split('`').map((part, i) => (i % 2 === 1 ? <code key={i}>{part}</code> : part));
+}
+
+function ProviderCard({ provider, kind, projects, canRun, onStart }: { provider: ProviderRecord; kind: ProviderKindDef | undefined; projects: ProjectSummary[]; canRun: boolean; onStart: () => void }) {
   const s = provider.settings;
   const client = useHub();
   const [editing, setEditing] = useState(false);
@@ -246,10 +273,12 @@ function ProviderCard({ provider, kind, projects, canRun, onOpenProject }: { pro
   const [test, setTest] = useState<{ ok: boolean; message: string; ms: number; costUsd: number | null } | 'running'>();
   const [remove, removing, removeError] = useCommand('provider.remove');
   const [secret, , secretError] = useCommand('provider.secret');
+  const toast = useToast();
   if (!kind) return null;
   const unsetVars = (s.secretEnv ?? []).filter((n) => !provider.secretsSet.includes(n));
   const needsKey = (s.auth === 'api-key' && !provider.hasSecret) || unsetVars.length > 0;
   const ready = kind.driverVerified && canRun && !needsKey && detect.data?.found !== false;
+  const reason = !kind.driverVerified ? undefined : !canRun ? 'This hub can’t run agents.' : needsKey ? (unsetVars.length > 0 ? `Set a value for ${unsetVars.join(', ')} first (Edit).` : 'Add the API key first (Edit).') : detect.data?.found === false ? `${kind.binary} isn’t installed on the hub machine.` : undefined;
 
   const runTest = async () => {
     if (!client) return;
@@ -262,180 +291,105 @@ function ProviderCard({ provider, kind, projects, canRun, onOpenProject }: { pro
   };
 
   return (
-    <article className="card provider" aria-label={s.label}>
-      <div className="provider-head">
-        <h3>{s.label}</h3>
-        {s.label !== kind.label && <span className="chip">{kind.label}</span>}
-        {kind.driverVerified ? <span className="chip ok">Can run agents</span> : <span className="chip">Setup only: driver not verified yet</span>}
-        <span className="spacer" />
-        <button className="small" onClick={runTest} disabled={test === 'running' || !kind.driverVerified}>{test === 'running' ? 'Testing…' : 'Test sign-in'}</button>
-        <button className="small" onClick={() => setEditing(!editing)} aria-expanded={editing}>{editing ? 'Close' : 'Edit'}</button>
-        <button className="small danger" disabled={removing || provider.running > 0} title={provider.running > 0 ? 'Stop its agents first' : undefined} onClick={() => remove({ providerId: provider.providerId })}>Remove</button>
+    <article className="panel provider-card provider" aria-label={s.label}>
+      <div className="provider-top">
+        <ProviderLogo kind={s.kind} />
+        <div style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 'var(--s-2)' }}>
+            <h3>{s.label}</h3>
+            {s.label !== kind.label && <span className="badge">{kind.label}</span>}
+            {kind.driverVerified ? <span className="badge good"><CircleCheck /> Can run agents</span> : <span className="badge">Setup only: driver not verified yet</span>}
+          </div>
+          <div className="faint xs" style={{ marginTop: 2 }}>
+            {detect.busy && !detect.data ? 'Checking the hub machine…'
+              : detect.data?.found ? <span className="row" style={{ gap: 6 }}><span className="status ok"><span className="dot" />{detect.data.version}</span><span className="mono">{detect.data.path}</span></span>
+              : <span className="status bad"><span className="dot" />Not found{detect.data?.error ? `: ${detect.data.error}` : ''}</span>}
+          </div>
+        </div>
+        <div className="actions">
+          <button className="sm" onClick={runTest} disabled={test === 'running' || !kind.driverVerified}><KeyRound /> {test === 'running' ? 'Testing…' : 'Test sign-in'}</button>
+          <button className="sm" onClick={() => setEditing(true)}><Pencil /> Edit</button>
+          <button className="sm ghost danger" disabled={removing || provider.running > 0} title={provider.running > 0 ? 'Stop its agents first' : undefined} onClick={async () => { if (await remove({ providerId: provider.providerId })) toast(`${s.label} removed`); }}><Trash2 /> Remove</button>
+        </div>
       </div>
-      {(removeError || secretError) && <p className="error" style={{ padding: '0 var(--space-5) var(--space-3)' }}>{removeError ?? secretError}</p>}
+      {(removeError || secretError) && <p className="error" style={{ padding: '0 var(--s-5) var(--s-3)' }}>{removeError ?? secretError}</p>}
       {test && test !== 'running' && (
-        <p className={`result ${test.ok ? 'ok' : 'bad'}`} style={{ margin: '0 var(--space-5) var(--space-4)' }} role="status">
-          {test.ok ? '✓ ' : '✗ '}{test.message}{test.ms > 0 && ` · ${duration(test.ms)}`}{test.costUsd !== null && ` · ${usd(test.costUsd)}`}
+        <p className={`result ${test.ok ? 'ok' : 'bad'}`} style={{ padding: '0 var(--s-5) var(--s-4)' }} role="status">
+          {test.ok ? <CircleCheck /> : <CircleX />}{test.message}{test.ms > 0 && ` · ${duration(test.ms)}`}{test.costUsd !== null && ` · ${usd(test.costUsd)}`}
         </p>
       )}
-      {editing ? (
-        <div className="provider-body" style={{ display: 'block' }}>
-          <ProviderForm kind={kind} provider={provider} onSaved={() => setEditing(false)} onCancel={() => setEditing(false)} />
-        </div>
-      ) : (
-        <div className="provider-body">
+      <div className="provider-grid">
+        <div>
           <dl className="kv">
-            <dt>Installed</dt>
-            <dd>
-              {detect.busy && !detect.data ? <span className="muted">Checking…</span>
-                : detect.data?.found ? <><span className="state ok"><span className="dot" aria-hidden />{detect.data.version}</span> <span className="faint mono small">{detect.data.path}</span></>
-                : <><span className="state bad"><span className="dot" aria-hidden />Not found</span> <span className="small muted">{detect.data?.error}</span><div className="small">Install on the hub machine: <code>{kind.install}</code></div></>}
-              {' '}<button className="link small" onClick={() => void detect.run()}>Recheck</button>
-            </dd>
-            <dt>Binary</dt>
-            <dd className="mono">{s.command || kind.binary}</dd>
-            <dt>Model</dt>
-            <dd>{s.model || <span className="muted">CLI default</span>}</dd>
-            {s.extraArgs.length > 0 && (<><dt>Arguments</dt><dd className="mono small">{s.extraArgs.join(' ')}</dd></>)}
+            <dt><Terminal /> Binary</dt><dd className="mono">{s.command || kind.binary}</dd>
+            <dt><Cpu /> Model</dt><dd>{s.model || <span className="faint">CLI default</span>}</dd>
+            <dt><Bot /> Running</dt><dd className="num">{provider.running} of {s.maxInstances}</dd>
+            {s.extraArgs.length > 0 && (<><dt>Arguments</dt><dd className="mono xs">{s.extraArgs.join(' ')}</dd></>)}
+            {!detect.data?.found && detect.data && <><dt>Install</dt><dd><code>{kind.install}</code> <button className="link xs" onClick={() => void detect.run()}>Recheck</button></dd></>}
+          </dl>
+        </div>
+        <div>
+          <dl className="kv">
+            <dt><KeyRound /> Sign-in</dt>
+            <dd>{s.auth === 'cli-login' ? <>The CLI’s own login <div className="hint">{rich(kind.login)}</div></> : <>API key <span className="mono xs faint">{kind.apiKeyEnv}</span> {provider.hasSecret ? <span className="badge good"><CircleCheck /> set</span> : <span className="badge bad">not set</span>}</>}</dd>
             {((s.env ?? []).length > 0 || (s.secretEnv ?? []).length > 0) && (
               <>
-                <dt>Environment</dt>
+                <dt><Variable /> Environment</dt>
                 <dd className="env-list">
-                  {(s.env ?? []).map((e) => <div key={e.name} className="mono small"><span>{e.name}</span>=<span className="muted">{e.value}</span></div>)}
+                  {(s.env ?? []).map((e) => <div key={e.name}><span>{e.name}</span>=<span className="muted">{e.value}</span></div>)}
                   {(s.secretEnv ?? []).map((n) => (
-                    <div key={n} className="mono small">
-                      <span>{n}</span>={provider.secretsSet.includes(n) ? <span className="muted">•••••• (secret)</span> : <span className="verdict bad">not set</span>}
-                    </div>
+                    <div key={n}><span>{n}</span>={provider.secretsSet.includes(n) ? <span className="muted">•••••• (secret)</span> : <span className="verdict bad">not set</span>}</div>
                   ))}
                 </dd>
               </>
             )}
           </dl>
-          <dl className="kv">
-            <dt>Sign-in</dt>
-            <dd>{s.auth === 'cli-login' ? <>The CLI’s own login <div className="hint">{rich(kind.login)}</div></> : <>API key <span className="mono small faint">{kind.apiKeyEnv}</span></>}</dd>
-            {s.auth === 'api-key' && (
-              <>
-                <dt>Key</dt>
-                <dd>
-                  {provider.hasSecret
-                    ? <><span className="state ok"><span className="dot" aria-hidden />Set</span> <button className="link small" onClick={() => setEditing(true)}>Replace</button> · <button className="link small" onClick={() => secret({ providerId: provider.providerId, value: null })}>Remove</button></>
-                    : <><span className="state bad"><span className="dot" aria-hidden />Not set</span> <button className="link small" onClick={() => setEditing(true)}>Add key</button></>}
-                </dd>
-              </>
-            )}
-            <dt>Running</dt>
-            <dd className="num">{provider.running} of {s.maxInstances}</dd>
-          </dl>
         </div>
-      )}
-      <div className="provider-foot">
-        {!kind.driverVerified ? (
-          <p className="small muted">Round Table doesn’t drive {kind.label} yet. To check it, run <code>node spikes/s8-drivers/check.mjs {kind.kind}</code> on the hub machine (where {kind.binary} is installed and logged in) and send back the report it makes. Your settings here are kept; starting agents unlocks once its driver is built.</p>
-        ) : <SpawnForm provider={provider} projects={projects} ready={ready} reason={!kind.driverVerified ? `Round Table can’t run ${kind.label} yet: its driver hasn’t passed the check.` : !canRun ? 'This hub can’t run agents.' : needsKey ? (unsetVars.length > 0 ? `Set a value for ${unsetVars.join(', ')} first (Edit).` : 'Add the API key first.') : detect.data?.found === false ? `${kind.binary} isn’t installed on the hub machine.` : undefined} />}
-        {provider.agents.length > 0 && <ProviderAgents provider={provider} projects={projects} onOpenProject={onOpenProject} />}
       </div>
+      <div className="provider-foot">
+        <div className="foot-bar">
+          {kind.driverVerified ? (
+            <>
+              <button className="primary sm" onClick={onStart} disabled={!ready} title={reason}><Rocket /> Start agents</button>
+              {reason && <span className="hint">{reason}</span>}
+            </>
+          ) : (
+            <p className="small muted" style={{ maxWidth: '72ch' }}>Round Table doesn’t drive {kind.label} yet. To check it, run <code>node spikes/s8-drivers/check.mjs {kind.kind}</code> on the hub machine (where {kind.binary} is installed and logged in) and send back the report it makes. Your settings here are kept.</p>
+          )}
+        </div>
+        {provider.agents.length > 0 && <ProviderAgents provider={provider} projects={projects} />}
+      </div>
+      <Sheet open={editing} onClose={() => setEditing(false)} title={`Edit ${s.label}`}>
+        <ProviderForm kind={kind} provider={provider} onSaved={() => { toast('Changes saved'); setEditing(false); }} onCancel={() => setEditing(false)} />
+      </Sheet>
     </article>
   );
 }
 
-/** `code` spans in registry text. */
-function rich(text: string): ReactNode {
-  return text.split('`').map((part, i) => (i % 2 === 1 ? <code key={i}>{part}</code> : part));
-}
-
-const NAMES = ['Ada', 'Bo', 'Cy', 'Dee', 'Eli', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kit', 'Lu', 'Max', 'Nia', 'Oz', 'Pia', 'Quin', 'Rae', 'Sol', 'Tam'];
-
-function SpawnForm({ provider, projects, ready, reason }: { provider: ProviderRecord; projects: ProjectSummary[]; ready: boolean; reason: string | undefined }) {
-  const id = useId();
-  const [projectId, setProjectId] = useState(projects[0]?.projectId ?? '');
-  useEffect(() => {
-    if (!projectId && projects[0]) setProjectId(projects[0].projectId);
-  }, [projects, projectId]);
-  const { data: roster } = useQuery<{ records: RosterRecord[] }>('board_read', projectId ? { section: 'roster', projectId } : undefined);
-  const taken = new Set((roster?.records ?? []).filter((r) => r.state !== 'removed' && r.state !== 'left').map((r) => r.name.toLowerCase()));
-  const free = Math.max(0, provider.settings.maxInstances - provider.running);
-  const suggestion = NAMES.filter((n) => !taken.has(n.toLowerCase())).slice(0, Math.min(2, Math.max(1, free))).join(', ');
-  const [names, setNames] = useState('');
-  const [spawn, spawning, error] = useCommand<{ started: Array<{ name: string }>; failed: Array<{ name: string; error: string }> }>('agent.spawn');
-  const [outcome, setOutcome] = useState<{ started: Array<{ name: string }>; failed: Array<{ name: string; error: string }> }>();
-  const list = (names.trim() || suggestion).split(/[,\n]/).map((n) => n.trim()).filter(Boolean);
-
-  if (projects.length === 0) return <p className="muted small">Create a project in the sidebar, then start agents into it.</p>;
-  return (
-    <form
-      className="stack"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const out = await spawn({ projectId, providerId: provider.providerId, names: list, tags: [] });
-        if (out) {
-          setOutcome(out);
-          if (out.failed.length === 0) setNames('');
-        }
-      }}
-    >
-      <div className="spawn">
-        <div className="field">
-          <label htmlFor={`${id}-project`}>Start agents in</label>
-          <select id={`${id}-project`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            {projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.name}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor={`${id}-names`}>Names, one agent each</label>
-          <input id={`${id}-names`} value={names} onChange={(e) => setNames(e.target.value)} placeholder={suggestion || 'Ada, Bo'} />
-        </div>
-        <button className="primary" type="submit" disabled={!ready || spawning || list.length === 0} title={reason}>
-          {spawning ? 'Starting…' : `Start ${list.length} agent${list.length === 1 ? '' : 's'}`}
-        </button>
-      </div>
-      {!ready && reason && <p className="hint">{reason}</p>}
-      {error && <p className="error">{error}</p>}
-      {outcome && (
-        <p className="small" role="status">
-          {outcome.started.length > 0 && <span className="verdict ok">Started {outcome.started.map((s) => s.name).join(', ')}. </span>}
-          {outcome.failed.map((f) => <span key={f.name} className="verdict bad">{f.name}: {f.error}. </span>)}
-        </p>
-      )}
-    </form>
-  );
-}
-
-function ProviderAgents({ provider, projects, onOpenProject }: { provider: ProviderRecord; projects: ProjectSummary[]; onOpenProject: (id: string) => void }) {
+function ProviderAgents({ provider, projects }: { provider: ProviderRecord; projects: ProjectSummary[] }) {
   const [setRun, busy] = useCommand('agent.run');
   const projectName = (id: string) => projects.find((p) => p.projectId === id)?.name ?? id;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" style={{ borderTop: '1px solid var(--border-soft)' }}>
       <table className="table">
         <thead><tr><th>Agent</th><th>Project</th><th>Status</th><th className="num">Cost</th><th><span className="sr-only">Actions</span></th></tr></thead>
         <tbody>
           {provider.agents.map((a) => (
             <tr key={a.agentId}>
-              <td><strong>{a.name}</strong></td>
-              <td><button className="link" onClick={() => onOpenProject(a.projectId)}>{projectName(a.projectId)}</button></td>
-              <td><RunState live={a.live} />{a.live?.status === 'crashed' && a.live.lastError && <div className="small faint">{a.live.lastError}</div>}</td>
+              <td><span className="row" style={{ gap: 'var(--s-2)', flexWrap: 'nowrap' }}><Avatar name={a.name} seat={a.live?.status ?? 'stopped'} size="xs" /><strong>{a.name}</strong></span></td>
+              <td><button className="link" onClick={() => go({ view: 'project', projectId: a.projectId })}><FolderGit2 size={13} style={{ marginRight: 4 }} />{projectName(a.projectId)}</button></td>
+              <td><RunState live={a.live} />{a.live?.status === 'crashed' && a.live.lastError && <div className="xs faint">{a.live.lastError}</div>}</td>
               <td className="num">{usd(a.costUsd)}</td>
-              <td style={{ textAlign: 'right' }}>
-                {a.run && a.live?.status === 'crashed' && <button className="small primary" disabled={busy} onClick={() => setRun({ projectId: a.projectId, agentId: a.agentId, run: true })} style={{ marginRight: 'var(--space-2)' }}>Restart</button>}
+              <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {a.run && a.live?.status === 'crashed' && <button className="sm primary" disabled={busy} onClick={() => setRun({ projectId: a.projectId, agentId: a.agentId, run: true })} style={{ marginRight: 'var(--s-1)' }}><RotateCcw /> Restart</button>}
                 {a.run
-                  ? <button className="small" disabled={busy} onClick={() => setRun({ projectId: a.projectId, agentId: a.agentId, run: false })}>Stop</button>
-                  : <button className="small" disabled={busy} onClick={() => setRun({ projectId: a.projectId, agentId: a.agentId, run: true })}>Start</button>}
+                  ? <button className="sm" disabled={busy} onClick={() => setRun({ projectId: a.projectId, agentId: a.agentId, run: false })}><Square /> Stop</button>
+                  : <button className="sm" disabled={busy} onClick={() => setRun({ projectId: a.projectId, agentId: a.agentId, run: true })}><Play /> Start</button>}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
-  );
-}
-
-const STATUS_LABEL: Record<string, string> = { working: 'working', idle: 'idle', starting: 'starting', stopped: 'stopped', crashed: 'crashed' };
-
-export function RunState({ live }: { live: LiveState | null | undefined }) {
-  const status = live?.status ?? 'stopped';
-  return (
-    <span className={`state ${status}`} title={live?.lastError ?? undefined}>
-      <span className="dot" aria-hidden />{STATUS_LABEL[status]}{status === 'working' && live?.tool ? <span className="faint mono">&nbsp;· {live.tool.replace(/^mcp__[^_]+__/, '')}</span> : null}
-    </span>
   );
 }

@@ -43,6 +43,7 @@ test('the human sets up the board in the app, approves the plan, and watches a t
   await expect(page.getByText(repo.path)).toBeVisible();
   await page.getByLabel('Test command').fill('sh test.sh');
   await page.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('button', { name: /Conversation/ }).click();
   await expect(page.locator('.feed')).toContainText('rules added by you');
 
   // An agent proposes, the leader commits, the human approves the plan in the app.
@@ -50,6 +51,7 @@ test('the human sets up the board in the app, approves the plan, and watches a t
   await expect(page.getByText('1 proposal waiting for the leader')).toBeVisible();
   const { committed: taskId } = await lead.client.call<{ committed: string }>('board_commit', { ticketId: proposal.ticketId });
   await page.getByRole('button', { name: 'Approve plan (1 proposed)' }).click();
+  await page.getByRole('tab', { name: /Board/ }).click();
   await expect(page.locator('.column[aria-label="ready"]')).toContainText('Say hello there');
 
   // Work, review, test; the hub merges after its own run.
@@ -65,8 +67,10 @@ test('the human sets up the board in the app, approves the plan, and watches a t
   await b.client.call('respond', { requestId: testReq.requestId, result: { kind: 'test', status: 'pass', headSha: head, evidence: 'ok' } });
 
   await expect(page.locator('.column[aria-label="done"]')).toContainText('Say hello there', { timeout: 15_000 });
+  await page.getByRole('tab', { name: /Changes/ }).click();
   const row = page.locator('table.changes tbody tr');
-  await expect(row).toContainText('✓ Bo');
+  await expect(row.locator('.verdict.ok')).toHaveCount(2);
+  await expect(row).toContainText('Bo');
   await expect(row.locator('.chip', { hasText: 'pass' })).toBeVisible();
   await expect(row).toContainText('merged');
   expect(repo.fileOnMain('greeting.txt')).toBe('hello there');
@@ -84,13 +88,14 @@ test('the app flags an agent whose model stopped calling tools, louder when work
   await page.clock.install();
   await page.goto(h.loginUrl());
   await page.locator('.nav-item', { hasText: 'Idle check' }).click();
+  await page.getByRole('tab', { name: /Table/ }).click();
   const card = page.locator('article.agent', { hasText: 'Ada' });
   await expect(card.getByText('working')).toBeVisible();
   await expect(card.locator('.nudge')).toHaveCount(0);
 
   // Two minutes without a tool call: Ada's next step is real work (propose tasks for the goal).
   await page.clock.fastForward('02:00');
-  await expect(card.locator('.state')).toHaveText('stopped');
+  await expect(card.locator('.status')).toHaveText('stopped');
   await expect(card.locator('.nudge.urgent')).toContainText('Type “continue” in its chat');
   await expect(card.locator('.nudge')).toContainText('Work is waiting for it');
 });

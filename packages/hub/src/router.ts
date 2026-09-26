@@ -132,9 +132,9 @@ export class Router {
         this.drivenIn(session, input.projectId, input.agentId);
         return { ok: hub.supervisor?.interrupt(input.agentId) ?? false };
       },
-      'agent.transcript': (session, input: { projectId: string; agentId: string }) => {
+      'agent.transcript': (session, input: { projectId: string; agentId: string; after: number; limit: number }) => {
         this.drivenIn(session, input.projectId, input.agentId);
-        return { entries: hub.supervisor?.transcript(input.agentId) ?? [], live: hub.supervisor?.state(input.agentId) ?? null };
+        return { entries: hub.supervisor?.transcript(input.agentId, input.after, input.limit) ?? [], live: hub.supervisor?.state(input.agentId) ?? null };
       },
       board_view: (session, input: { view: string; projectId?: string }) =>
         boardView(hub.model, this.project(session, input.projectId), input.view, agentOf(session)?.agentId as AgentId | undefined),

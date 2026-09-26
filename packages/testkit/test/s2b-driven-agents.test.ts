@@ -142,6 +142,33 @@ describe('the supervisor runs the agents (ADR-0018)', () => {
     expect(ada.sent).toHaveLength(3); // then left idle for the human to see
   });
 
+  it('keeps every step of the session — thinking, tool calls with inputs and results, text — and pages through it', async () => {
+    const { driver, projectId, providerId } = await setup();
+    const { started } = await spawn(projectId, providerId, ['Ada']);
+    const agentId = started[0]!.agentId;
+    await expect.poll(() => driver.started.length).toBe(1);
+    const ada = driver.started[0]!;
+    ada.emit({ type: 'thinking', text: 'The goal needs a task list first.' });
+    ada.emit({ type: 'tool', id: 't1', name: 'Read', input: '{"file_path":"/repo/README.md"}' });
+    ada.emit({ type: 'tool_result', id: 't1', output: '# sample\n', isError: false });
+    ada.emit({ type: 'tool', id: 't2', name: 'Bash', input: '{"command":"npm test"}' });
+    ada.emit({ type: 'tool_result', id: 't2', output: '1 failing', isError: true });
+    ada.emit({ type: 'text', text: 'Proposing the first task.' });
+    ada.endTurn({ sessionCostUsd: 0.05 });
+    type Step = { id: number; kind: string; text: string; data: Record<string, unknown> | null };
+    const all = await t.human.call<{ entries: Step[] }>('agent.transcript', { projectId, agentId });
+    expect(all.entries.map((e) => e.kind)).toEqual(['status', 'to_agent', 'thinking', 'tool', 'tool_result', 'tool', 'tool_result', 'text', 'turn']);
+    expect(all.entries[3]).toMatchObject({ kind: 'tool', text: 'Read', data: { id: 't1', name: 'Read', input: '{"file_path":"/repo/README.md"}' } });
+    expect(all.entries[6]).toMatchObject({ kind: 'tool_result', text: '1 failing', data: { id: 't2', isError: true } });
+    expect(all.entries[8]).toMatchObject({ kind: 'turn', data: { ok: true, costUsd: 0.05, tokens: 110 } });
+
+    ada.emit({ type: 'text', text: 'One more thing.' });
+    const newer = await t.human.call<{ entries: Step[] }>('agent.transcript', { projectId, agentId, after: all.entries.at(-1)!.id });
+    expect(newer.entries.map((e) => e.text)).toEqual(['One more thing.']);
+    const latest = await t.human.call<{ entries: Step[] }>('agent.transcript', { projectId, agentId, limit: 2 });
+    expect(latest.entries.map((e) => e.kind)).toEqual(['turn', 'text']);
+  });
+
   it('tells an agent when its role changes, as its next turn', async () => {
     const { driver, projectId, providerId } = await setup();
     const { started } = await spawn(projectId, providerId, ['Lead']);

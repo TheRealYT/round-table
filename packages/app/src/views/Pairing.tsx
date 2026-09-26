@@ -19,9 +19,10 @@ export function PairingView({ onOpenProject }: { onOpenProject: (projectId: stri
   const pending = (data?.requests ?? []).filter((r) => r.status === 'pending');
 
   return (
-    <div className="view">
-      <header className="view-header">
+    <div className="page">
+      <header className="page-head">
         <div>
+          <div className="eyebrow">Agents you run yourself</div>
           <h1>Pairing</h1>
           <p className="lede">For agents you run yourself in an IDE or chat app. The agent shows a match phrase in its chat; check it matches here, allow it, and paste the code into that chat. Agents the hub runs for you need none of this: start them from Agents.</p>
         </div>
@@ -44,7 +45,7 @@ export function PairingView({ onOpenProject }: { onOpenProject: (projectId: stri
         {(data?.agents ?? []).length === 0 ? (
           <p className="empty">None yet.</p>
         ) : (
-          <div className="table-wrap"><table className="table">
+          <div className="panel table-wrap"><table className="table">
             <thead>
               <tr><th>Agent</th><th>Project</th><th>Role</th><th>State</th><th>Key</th><th>Paired</th></tr>
             </thead>
@@ -78,7 +79,7 @@ function RequestCard({ request, projects, agents, onAllowed }: { request: Pairin
   const id = useId();
 
   return (
-    <article className="card request">
+    <article className="panel request-card request">
       <div className="phrase" aria-label="match phrase">{request.matchPhrase}</div>
       {resumes && (
         <p className="nudge urgent" role="note">
@@ -86,7 +87,7 @@ function RequestCard({ request, projects, agents, onAllowed }: { request: Pairin
           Allow it only if you opened this chat for {resumes.name}. The chat working as {resumes.name} now will be stopped.
         </p>
       )}
-      <dl className="facts">
+      <dl className="facts-list">
         <dt>Name</dt><dd>{request.name}</dd>
         <dt>Client</dt><dd>{request.client}</dd>
         <dt>Origin</dt><dd className="mono">{request.origin}</dd>
@@ -135,7 +136,7 @@ function CodeCard({ allowed, onDone }: { allowed: Allowed; onDone: () => void })
   }, []);
   const left = Math.max(0, Math.round((allowed.expiresAt - now) / 1000));
   return (
-    <section className="card code-card" role="status">
+    <section className="panel code-card" role="status">
       <h2>Paste this code into {allowed.name}'s chat</h2>
       <div className="code" data-testid="pairing-code">{allowed.code}</div>
       <p className="muted">
@@ -160,5 +161,5 @@ function CodeCard({ allowed, onDone }: { allowed: Allowed; onDone: () => void })
 export function StateDot({ state, connected }: { state: string | null; connected: boolean }) {
   const label = state === 'active' ? (connected ? 'connected' : 'reconnecting') : (state ?? 'unknown');
   const tone = state === 'active' && connected ? 'ok' : state === 'active' || state === 'stale' ? 'warn' : 'off';
-  return <span className={`state ${tone}`}><span className="dot" aria-hidden />{label}</span>;
+  return <span className={`status ${tone}`}><span className="dot" aria-hidden />{label}</span>;
 }

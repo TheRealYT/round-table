@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { AgentProcess, Driver, DriverEvent, DriverStart } from './driver.ts';
 import { agentEnv, detectBinary } from './process.ts';
+import { cap } from './claude-code.ts';
 
 /**
  * Antigravity CLI (`agy`), from the S8 check on agy 1.2.11 (6 of 6): one `agy -p` process per
@@ -149,15 +150,23 @@ function translate(event: Record<string, any>, state: { started: boolean; ended:
   }
   if (event.event === 'step_update' && event.step_update) {
     const s = event.step_update;
+    const id = `step-${s.step_index}`;
     if (s.step_type === 'tool' && s.state === 'ACTIVE') {
       const p = s.tool_info?.parameters ?? {};
       const name = s.tool_name === 'call_mcp_tool' ? `mcp__${p.ServerName}__${p.ToolName}` : String(s.tool_name);
-      return [{ type: 'tool', name, input: JSON.stringify(s.tool_name === 'call_mcp_tool' ? (p.Arguments ?? {}) : p).slice(0, 300) }];
+      return [{ type: 'tool', id, name, input: cap(JSON.stringify(s.tool_name === 'call_mcp_tool' ? (p.Arguments ?? {}) : p)) }];
+    }
+    if (s.step_type === 'tool' && s.state === 'DONE') {
+      const output = s.tool_info?.output;
+      return [{ type: 'tool_result', id, output: cap(typeof output === 'string' ? output : output === undefined ? '' : JSON.stringify(output)), isError: s.tool_info?.error !== undefined }];
     }
     if (s.step_type === 'agent_response') {
       const text = (state.texts.get(s.step_index) ?? '') + (typeof s.text_delta === 'string' ? s.text_delta : '');
       state.texts.set(s.step_index, text);
-      if (s.state === 'DONE' && text.trim()) return [{ type: 'text', text: text.trim() }];
+      if (s.state !== 'DONE') return [];
+      // agy reports how much it thought, not what: show the thinking step with its token count.
+      const thought: DriverEvent[] = s.usage?.thinking_tokens > 0 ? [{ type: 'thinking', text: '', tokens: Number(s.usage.thinking_tokens) }] : [];
+      return [...thought, ...(text.trim() ? [{ type: 'text' as const, text: text.trim() }] : [])];
     }
     return [];
   }

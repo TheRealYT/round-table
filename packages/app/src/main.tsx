@@ -2,15 +2,18 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
 import { HubProvider } from './hub.tsx';
+import { applyStoredTheme, ToastProvider } from './ui.tsx';
 import './styles.css';
 
-// Slice S1: Pairing and project Feed. S5 adds Home, Inbox, Board, Logs and the rest (architecture §7).
+applyStoredTheme();
 const root = document.getElementById('root');
 if (root) {
   createRoot(root).render(
     <StrictMode>
       <HubProvider>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </HubProvider>
     </StrictMode>,
   );

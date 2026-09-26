@@ -21,7 +21,7 @@ test('the human pairs an agent through the app and they exchange messages', asyn
   const pending = await requestJoin(agent, { name: 'Worker A', client: 'scripted', tags: ['backend'] });
   const card = page.locator('article.request', { hasText: pending.request.matchPhrase });
   await expect(card).toBeVisible();
-  await expect(page.locator('.nav-item', { hasText: 'Pairing' }).locator('.badge')).toHaveText('1');
+  await expect(page.locator('.nav-item', { hasText: 'Pairing' }).locator('.count-badge')).toHaveText('1');
 
   await card.getByLabel('Project', { exact: true }).selectOption('new');
   await card.getByLabel('New project name').fill('Checkout redesign');
@@ -35,6 +35,8 @@ test('the human pairs an agent through the app and they exchange messages', asyn
 
   await page.getByRole('button', { name: 'Done, open project' }).click();
   await expect(page.getByRole('heading', { name: 'Checkout redesign' })).toBeVisible();
+  await page.getByRole('tab', { name: /Table/ }).click();
+  await page.getByRole('button', { name: /Conversation/ }).click();
   const agentCard = page.locator('article.agent', { hasText: 'Worker A' });
   await expect(agentCard.getByText('working')).toBeVisible();
 

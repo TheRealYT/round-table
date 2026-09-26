@@ -30,7 +30,11 @@ export interface DriverStart {
 export type DriverEvent =
   | { type: 'session'; sessionId: string }
   | { type: 'text'; text: string }
-  | { type: 'tool'; name: string; input: string }
+  /** The model's reasoning, when the CLI shows it (empty text: it thought, but the CLI hides the content). */
+  | { type: 'thinking'; text: string; tokens?: number }
+  /** A tool call; `id` pairs it with its result. `input` is the full JSON (capped). */
+  | { type: 'tool'; id?: string; name: string; input: string }
+  | { type: 'tool_result'; id?: string; output: string; isError: boolean }
   | {
       type: 'turn_end';
       ok: boolean;

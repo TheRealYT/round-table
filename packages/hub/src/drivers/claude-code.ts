@@ -93,14 +93,31 @@ export class ClaudeCodeDriver implements Driver {
   }
 }
 
+/** Tool inputs and outputs are kept whole up to this size (the transcript is for reading, not replay). */
+const CAP = 20_000;
+
+export function cap(text: string): string {
+  return text.length > CAP ? `${text.slice(0, CAP)}\n… (${text.length - CAP} more characters)` : text;
+}
+
 /** Claude Code's stream-json events → driver events. */
-function translate(event: Record<string, any>): DriverEvent[] {
+export function translate(event: Record<string, any>): DriverEvent[] {
   if (event.type === 'system' && event.subtype === 'init' && typeof event.session_id === 'string') return [{ type: 'session', sessionId: event.session_id }];
   if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
     return event.message.content.flatMap((c: Record<string, any>): DriverEvent[] => {
       if (c.type === 'text' && typeof c.text === 'string' && c.text.trim()) return [{ type: 'text', text: c.text }];
-      if (c.type === 'tool_use') return [{ type: 'tool', name: String(c.name), input: JSON.stringify(c.input ?? {}).slice(0, 300) }];
+      if (c.type === 'thinking') return [{ type: 'thinking', text: typeof c.thinking === 'string' ? c.thinking : '' }];
+      if (c.type === 'redacted_thinking') return [{ type: 'thinking', text: '' }];
+      if (c.type === 'tool_use') return [{ type: 'tool', id: String(c.id ?? ''), name: String(c.name), input: cap(JSON.stringify(c.input ?? {})) }];
       return [];
+    });
+  }
+  // Tool results come back as the "user" side of the conversation.
+  if (event.type === 'user' && Array.isArray(event.message?.content)) {
+    return event.message.content.flatMap((c: Record<string, any>): DriverEvent[] => {
+      if (c.type !== 'tool_result') return [];
+      const output = typeof c.content === 'string' ? c.content : Array.isArray(c.content) ? c.content.map((p: Record<string, any>) => (p.type === 'text' ? p.text : `[${p.type}]`)).join('\n') : '';
+      return [{ type: 'tool_result', id: String(c.tool_use_id ?? ''), output: cap(output), isError: Boolean(c.is_error) }];
     });
   }
   if (event.type === 'result') {

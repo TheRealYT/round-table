@@ -24,7 +24,8 @@ if (prompt.includes('SLOW')) {
   setInterval(() => {}, 1000);
 } else {
   step({ step_index: 1, state: 'ACTIVE', step_type: 'tool', tool_name: 'call_mcp_tool', tool_info: { name: 'call_mcp_tool', parameters: { ServerName: 'rt-ada', ToolName: 'report', Arguments: { text: 'done' } } } });
+  step({ step_index: 1, state: 'DONE', step_type: 'tool', tool_name: 'call_mcp_tool', duration_seconds: 0.01, tool_info: { name: 'call_mcp_tool', parameters: { ServerName: 'rt-ada', ToolName: 'report', Arguments: { text: 'done' } }, output: 'recorded' } });
   step({ step_index: 2, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'All ' });
-  step({ step_index: 2, state: 'DONE', step_type: 'agent_response', text_delta: 'done.', duration_seconds: 1.5, usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } });
+  step({ step_index: 2, state: 'DONE', step_type: 'agent_response', text_delta: 'done.', duration_seconds: 1.5, usage: { input_tokens: 10, output_tokens: 5, thinking_tokens: 7, total_tokens: 15 } });
   out({ event: 'result', result: { conversation_id: conversation, status: 'SUCCESS', response: 'All done. OK', duration_seconds: 2.5, usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 5, cache_read_tokens: 50 } } });
 }

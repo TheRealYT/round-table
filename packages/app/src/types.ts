@@ -129,7 +129,9 @@ export interface ProviderList {
 }
 
 export interface TranscriptEntry {
+  id: number;
   at: number;
-  kind: 'to_agent' | 'text' | 'tool' | 'turn' | 'status';
+  kind: 'to_agent' | 'thinking' | 'text' | 'tool' | 'tool_result' | 'turn' | 'status';
   text: string;
+  data: Record<string, unknown> | null;
 }

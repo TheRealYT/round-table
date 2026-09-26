@@ -54,7 +54,9 @@ describe('Antigravity driver (S8: agy 1.2.11)', () => {
 
     const session = events.find((e) => e.type === 'session');
     expect(session).toBeDefined();
-    expect(events).toContainEqual({ type: 'tool', name: 'mcp__rt-ada__report', input: '{"text":"done"}' });
+    expect(events).toContainEqual({ type: 'tool', id: 'step-1', name: 'mcp__rt-ada__report', input: '{"text":"done"}' });
+    expect(events).toContainEqual({ type: 'tool_result', id: 'step-1', output: 'recorded', isError: false });
+    expect(events).toContainEqual({ type: 'thinking', text: '', tokens: 7 });
     expect(events).toContainEqual({ type: 'text', text: 'All done.' });
     expect(turnEnds(events)[0]).toEqual({ type: 'turn_end', ok: true, durationMs: 2500, sessionCostUsd: null, inputTokens: 150, outputTokens: 25, error: null });
 

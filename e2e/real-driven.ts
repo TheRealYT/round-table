@@ -56,8 +56,9 @@ while (Date.now() < deadline) {
   }
 }
 for (const name of ['Lead', 'Ada', 'Bo']) {
-  const { entries } = await human.call<{ entries: Array<{ kind: string; text: string }> }>('agent.transcript', { projectId, agentId: id[name] });
-  log(`── ${name} transcript (last 12) ──\n${entries.slice(-12).map((e) => `  ${e.kind}: ${e.text.slice(0, 220).replace(/\n/g, ' ⏎ ')}`).join('\n')}`);
+  const { entries } = await human.call<{ entries: Array<{ kind: string; text: string }> }>('agent.transcript', { projectId, agentId: id[name], limit: 2000 });
+  const kinds = entries.reduce<Record<string, number>>((m, e) => ({ ...m, [e.kind]: (m[e.kind] ?? 0) + 1 }), {});
+  log(`── ${name}: ${entries.length} steps ${JSON.stringify(kinds)} (last 12) ──\n${entries.slice(-12).map((e) => `  ${e.kind}: ${e.text.slice(0, 220).replace(/\n/g, ' ⏎ ')}`).join('\n')}`);
 }
 log(`outcome: ${outcome}; main now: ${JSON.stringify(repo.fileOnMain('greeting.txt'))}`);
 human.close();

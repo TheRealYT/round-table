@@ -8,7 +8,8 @@ import type { SecretStore } from './secrets.ts';
 import type { SqliteEventStore } from './sqlite-store.ts';
 
 const HUB: Principal = { kind: 'hub', component: 'supervisor' };
-const TRANSCRIPT_MAX = 200;
+/** Steps kept per agent in the transcript table; older ones are pruned. */
+const TRANSCRIPT_KEEP = 5_000;
 /** Ask the same next step at most this often before leaving the agent idle for the human. */
 const SAME_STEP_MAX = 2;
 
@@ -49,10 +50,17 @@ export function providerEnv(provider: ProviderRecord, secrets: SecretStore): Rec
   return env;
 }
 
+/**
+ * One step of a hub-run agent's session, as the CLI reported it: what the hub told it, its thinking,
+ * each tool call and result, its text, and turn boundaries. Kept in the hub database (not the event
+ * log: it is operational and large), so the human can read the whole session, also after restarts.
+ */
 export interface TranscriptEntry {
+  id: number;
   at: number;
-  kind: 'to_agent' | 'text' | 'tool' | 'turn' | 'status';
+  kind: 'to_agent' | 'thinking' | 'text' | 'tool' | 'tool_result' | 'turn' | 'status';
   text: string;
+  data: Record<string, unknown> | null;
 }
 
 export interface LiveState {
@@ -68,7 +76,6 @@ interface Live extends LiveState {
   /** Deliveries in the current turn, acked when it ends. */
   handed: number[];
   turnStartedAt: number;
-  transcript: TranscriptEntry[];
   lastStep: string | null;
   sameStep: number;
   restarts: number;
@@ -107,6 +114,16 @@ export class Supervisor {
 
   constructor(options: SupervisorOptions) {
     this.o = options;
+    const sql = options.store.reader;
+    sql.run(`CREATE TABLE IF NOT EXISTS agent_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      at INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      text TEXT NOT NULL,
+      data TEXT
+    )`);
+    sql.run('CREATE INDEX IF NOT EXISTS agent_steps_by_agent ON agent_steps (agent_id, id)');
   }
 
   /** After a hub restart: start every agent the human left running. */
@@ -139,15 +156,20 @@ export class Supervisor {
     return { status: live.status, since: live.since, lastError: live.lastError, tool: live.tool };
   }
 
-  transcript(agentId: string): TranscriptEntry[] {
-    return this.live.get(agentId)?.transcript ?? [];
+  /** Steps after `after` (oldest first); with no `after`, the latest `limit` steps. */
+  transcript(agentId: string, after = 0, limit = 500): TranscriptEntry[] {
+    const sql = this.o.store.reader;
+    const rows = after > 0
+      ? sql.all<{ id: number; at: number; kind: string; text: string; data: string | null }>('SELECT * FROM agent_steps WHERE agent_id = ? AND id > ? ORDER BY id LIMIT ?', [agentId, after, limit])
+      : sql.all<{ id: number; at: number; kind: string; text: string; data: string | null }>('SELECT * FROM (SELECT * FROM agent_steps WHERE agent_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id', [agentId, limit]);
+    return rows.map((r) => ({ id: r.id, at: r.at, kind: r.kind as TranscriptEntry['kind'], text: r.text, data: r.data ? (JSON.parse(r.data) as Record<string, unknown>) : null }));
   }
 
   interrupt(agentId: string): boolean {
     const live = this.live.get(agentId);
     if (!live?.proc || live.status !== 'working') return false;
     live.proc.interrupt();
-    this.note(live, 'status', 'interrupted by the human');
+    this.note(agentId, 'status', 'interrupted by the human');
     return true;
   }
 
@@ -185,7 +207,7 @@ export class Supervisor {
   private entry(agentId: string): Live {
     let live = this.live.get(agentId);
     if (!live) {
-      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, transcript: [], lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0, notices: [] };
+      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0, notices: [] };
       this.live.set(agentId, live);
     }
     return live;
@@ -231,13 +253,13 @@ export class Supervisor {
       live.lastError = null;
       live.lastStep = null;
       live.sameStep = 0;
-      this.note(live, 'status', resumed ? 'started (resuming its conversation)' : 'started');
+      this.note(agentId, 'status', resumed ? 'started (resuming its conversation)' : 'started');
       this.sendTurn(agentId, live, this.kickoff(agentId, resumed));
     } catch (error) {
       if (generation !== live.generation) return;
       live.proc = undefined;
       live.lastError = error instanceof Error ? error.message : String(error);
-      this.note(live, 'status', `could not start: ${live.lastError}`);
+      this.note(agentId, 'status', `could not start: ${live.lastError}`);
       this.setStatus(live, 'crashed');
     }
   }
@@ -248,11 +270,17 @@ export class Supervisor {
         this.o.bus.dispatch('agent.cli_session', { agentId, cliSessionId: event.sessionId }, HUB);
         return;
       case 'text':
-        this.note(live, 'text', event.text);
+        this.note(agentId, 'text', event.text);
+        return;
+      case 'thinking':
+        this.note(agentId, 'thinking', event.text, event.tokens === undefined ? null : { tokens: event.tokens });
         return;
       case 'tool':
         live.tool = event.name;
-        this.note(live, 'tool', `${event.name} ${event.input}`);
+        this.note(agentId, 'tool', event.name, { id: event.id ?? null, name: event.name, input: event.input });
+        return;
+      case 'tool_result':
+        this.note(agentId, 'tool_result', event.output, { id: event.id ?? null, isError: event.isError });
         return;
       case 'turn_end': {
         const driven = this.o.model.agents[agentId as AgentId]?.driven;
@@ -264,7 +292,7 @@ export class Supervisor {
         if (event.ok) live.restarts = 0;
         live.lastError = event.error;
         this.o.bus.dispatch('agent.turn', { agentId, ok: event.ok, durationMs: event.durationMs, costUsd, sessionCostUsd: event.sessionCostUsd, inputTokens: event.inputTokens, outputTokens: event.outputTokens, error: event.error }, HUB);
-        this.note(live, 'turn', `${event.ok ? 'turn done' : `turn ended: ${event.error}`} (${Math.round(event.durationMs / 1000)} s${costUsd === null ? '' : `, $${costUsd.toFixed(3)}`})`);
+        this.note(agentId, 'turn', `${event.ok ? 'turn done' : `turn ended: ${event.error}`} (${Math.round(event.durationMs / 1000)} s${costUsd === null ? '' : `, $${costUsd.toFixed(3)}`})`, { ok: event.ok, durationMs: event.durationMs, costUsd, tokens: event.inputTokens + event.outputTokens, error: event.error });
         this.setStatus(live, 'idle');
         this.queuePump();
         return;
@@ -279,11 +307,11 @@ export class Supervisor {
           return;
         }
         live.lastError = event.error ?? `the process exited (code ${event.code})`;
-        this.note(live, 'status', `exited: ${live.lastError}`);
+        this.note(agentId, 'status', `exited: ${live.lastError}`);
         this.setStatus(live, 'crashed');
         const delay = this.o.restartDelaysMs[live.restarts];
         if (delay === undefined) {
-          this.note(live, 'status', 'crashed too often: start it again from the app');
+          this.note(agentId, 'status', 'crashed too often: start it again from the app');
           return;
         }
         live.restarts += 1;
@@ -373,7 +401,7 @@ export class Supervisor {
   private sendTurn(agentId: string, live: Live, text: string): void {
     if (!live.proc) return;
     live.turnStartedAt = this.o.now();
-    this.note(live, 'to_agent', text);
+    this.note(agentId, 'to_agent', text);
     this.setStatus(live, 'working');
     live.proc.send(text);
     void agentId;
@@ -386,9 +414,14 @@ export class Supervisor {
     }
   }
 
-  private note(live: Live, kind: TranscriptEntry['kind'], text: string): void {
-    live.transcript.push({ at: this.o.now(), kind, text: text.length > 4000 ? `${text.slice(0, 4000)}…` : text });
-    if (live.transcript.length > TRANSCRIPT_MAX) live.transcript.splice(0, live.transcript.length - TRANSCRIPT_MAX);
+  private written = 0;
+
+  private note(agentId: string, kind: TranscriptEntry['kind'], text: string, data: Record<string, unknown> | null = null): void {
+    const sql = this.o.store.reader;
+    sql.run('INSERT INTO agent_steps (agent_id, at, kind, text, data) VALUES (?, ?, ?, ?, ?)', [agentId, this.o.now(), kind, text, data ? JSON.stringify(data) : null]);
+    if (++this.written % 200 === 0) {
+      sql.run('DELETE FROM agent_steps WHERE agent_id = ? AND id <= (SELECT id FROM agent_steps WHERE agent_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?)', [agentId, agentId, TRANSCRIPT_KEEP]);
+    }
   }
 }
 
