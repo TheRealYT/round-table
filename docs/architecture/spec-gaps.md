@@ -32,10 +32,13 @@ Status key:
 | 20 | Opening a PR and posting test results have no dedicated tool | The model needs a clear, schema-checked way to do both. | `board_propose('artifacts', 'open', {kind: 'change_request', …})` opens a CR. Review and test outcomes go through `respond(request_id, result)` with a required `headSha`. No new tools. | Refinement | [0008](adr/0008-local-git-host-and-change-requests.md) |
 | 21 | Package names `mcp-client/`, `human-app/` | "MCP client" is misleading: the package is an MCP *server* and a hub client. Also, the domain logic needs a home without IO. | Packages are `protocol`, `core` (new, pure), `hub`, `agent` (`rt-agent`), `cli` (new), `app`, `testkit`. | Deviation (adopted) | — |
 
-## Things to verify in S0 before relying on them
+## S0 results
 
-- Claude Code's MCP request timeout for a long-running tool call, and whether progress notifications reset it (rows 1, 2).
-- Claude Code handling of `notifications/tools/list_changed` mid-session (row 12).
-- A `PreToolUse` hook that denies with a reason, running under a second or so, talking to a local unix socket (row 14).
-- `node:sqlite` on Node 24 and 26: WAL mode, FTS5 availability, synchronous API performance under a single writer (rows 6, 7).
-- Node type stripping for workspace packages linked through `node_modules` (runtime without a build step).
+All five questions were checked on 2026-09-26 against Claude Code 2.1.283 and Node 24.21. Details are in [`spikes/s0-mcp/FINDINGS.md`](../../spikes/s0-mcp/FINDINGS.md).
+
+- **Tool call timeout**: 60 s, and progress notifications do **not** extend it. `MCP_TOOL_TIMEOUT` in settings `env` **does**. `rt agent install` sets it to 300 s and runs `wait` up to 240 s; without install, `wait` is capped at 50 s (rows 1, 2).
+- **`tools/list_changed`**: works mid-session (row 12).
+- **Hook deny via unix socket**: works, with 5–13 ms latency (row 14).
+- **node:sqlite**: WAL and FTS5 work, at about 3,700 transactions/s with full fsync (rows 6, 7).
+- **Type stripping through workspace links**: works.
+- **New finding**: without context, the model treats text appended by the server (banner, hook reasons) as a possible prompt injection and ignores it. With server `instructions` that define a factual `[Round Table]` status line, it acts on it. Recorded in ADR-0001 and ADR-0012.

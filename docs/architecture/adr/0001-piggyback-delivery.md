@@ -14,6 +14,11 @@ The spec has agents "listen" by long-polling `wait`, and says human messages int
 - **Piggyback**: the hub pushes inbox counts to rt-agent whenever they change. rt-agent appends a one-line banner to *every* Round Table tool result and puts `human`/`control` items inline. The model sees the human at its next Round Table call, even mid-task.
 - Delivery rows are acked by rt-agent on its next call (at-least-once). The model never handles a cursor.
 
+## S0 findings (2026-09-26)
+
+- Claude Code aborts a tool call at 60 s, and progress notifications do not extend that. `MCP_TOOL_TIMEOUT` in the settings `env` does. `rt agent install` therefore writes `MCP_TOOL_TIMEOUT=300000` into the worktree's `.claude/settings.local.json` and starts rt-agent with `--wait-max-ms 240000`. The default stays 50 s.
+- The banner must be **factual and labeled**, never imperative. Without context, the model ignored `⟪inbox: 1 human (call wait now)⟫` as a possible injection. With MCP server `instructions` defining the status line, it acted on `[Round Table] inbox: 1 human message waiting (priority: human). Read it with wait.` straight away. rt-agent's `instructions` therefore define the `[Round Table]` line, `wait`, and priority handling.
+
 ## Consequences
 
 - The spec's "human first" holds whenever the model touches the Round Table. With the hook adapter ([ADR-0012](0012-security-boundary-and-threat-model.md)) it also holds at any tool call.

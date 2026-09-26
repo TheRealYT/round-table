@@ -1,16 +1,21 @@
 import { PRIORITIES, type InboxCounts } from '@round-table/protocol';
 
+/** Every line rt-agent adds to a tool result starts with this, and the server instructions define it (S0 finding 6). */
+export const STATUS_PREFIX = '[Round Table]';
+
 /**
- * The piggyback banner (ADR-0001): appended to every Round Table tool result so a busy agent
- * learns about waiting messages at its next call. Empty when nothing is pending.
+ * The piggyback status line (ADR-0001): appended to every Round Table tool result so a busy agent
+ * learns about waiting messages at its next call. Factual, never imperative: the model ignored an
+ * imperative banner as a possible injection in S0. Empty when there is nothing to report.
  */
 export function inboxBanner(counts: InboxCounts, activityDue = false): string {
-  const parts = PRIORITIES.filter((p) => counts[p] > 0).map((p) => `${counts[p]} ${p}`);
-  const notes: string[] = [];
-  if (parts.length > 0) {
-    const urgent = counts.human > 0 || counts.critical > 0;
-    notes.push(`inbox: ${parts.join(' · ')}${urgent ? ' (call wait now)' : ''}`);
+  const waiting = PRIORITIES.filter((p) => counts[p] > 0);
+  const parts: string[] = [];
+  if (waiting.length > 0) {
+    const total = waiting.reduce((n, p) => n + counts[p], 0);
+    const detail = waiting.map((p) => `${counts[p]} ${p}`).join(', ');
+    parts.push(`inbox: ${total} message${total === 1 ? '' : 's'} waiting (${detail}). Read with wait.`);
   }
-  if (activityDue) notes.push('activity report due');
-  return notes.length === 0 ? '' : `⟪${notes.join(' | ')}⟫`;
+  if (activityDue) parts.push('activity report due (no activity call in the last 5 min).');
+  return parts.length === 0 ? '' : `${STATUS_PREFIX} ${parts.join(' ')}`;
 }

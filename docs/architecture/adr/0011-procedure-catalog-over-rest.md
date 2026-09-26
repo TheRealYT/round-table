@@ -13,6 +13,10 @@ The spec gives agents MCP tools over WebSocket and the human dashboard "the same
 - rt-agent generates its MCP tools from the procedures marked `mcp`. The app calls procedures over `/app`. HTTP is kept for static files, `/login` and exports.
 - The router enforces `allow` on every call. rt-agent hides leader tools until the role is known, then sends `notifications/tools/list_changed`. Hiding them is for the model's convenience; the hub's check is the security boundary.
 
+## S0 findings (2026-09-26)
+
+Claude Code 2.1.283 honors `notifications/tools/list_changed` mid-session: a tool enabled after the first call was visible and callable in the same run.
+
 ## Consequences
 
 - A procedure added once is available to both surfaces with the same validation and access rules.

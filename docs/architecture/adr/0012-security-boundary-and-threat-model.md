@@ -14,6 +14,11 @@ The spec puts security "at the doors" (pairing and key-signed rejoin) and keeps 
 - **Hook adapter** (Claude Code first): `rt hook <event>` talks to its slot's rt-agent over a unix socket. It logs every client tool call as `log_action`, denies tools while paused, denies known destructive patterns without a recorded human approval, and fails open (with a local log) when rt-agent is down.
 - **Threat model**: protects against confused or prompt-injected agents (acting as the human, self-approval, direct board writes, forged human quotes, admitting agents, replayed rejoins). It does **not** protect against a deliberately malicious agent running as the same OS user, which can read the hub database. The documented mitigation is to run `rt-hub` as a separate OS user with a 0700 data directory.
 
+## S0 findings (2026-09-26)
+
+- A PreToolUse hook that talks to a unix socket answers in 5–13 ms, and the model receives the deny reason.
+- Deny reasons must be factual (`[Round Table] Blocked: project paused by the human.`) and explained in rt-agent's MCP `instructions`. An imperative reason ("Commit WIP and call wait") was treated by the model as a possible prompt injection.
+
 ## Consequences
 
 - The protections the spec cares about hold for the realistic failure (a misbehaving model), and the limit is written down instead of implied.

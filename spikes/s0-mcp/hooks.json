@@ -1,0 +1,1 @@
+{ "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "RT_HOOK_SOCK=/tmp/rt-spike.sock /tmp/claude-0/-home-user-round-table/a4c4114c-77c9-520e-bf50-f84c37ad4fb6/scratchpad/node24/bin/node /home/user/round-table/spikes/s0-mcp/hook.mjs 2>>/home/user/round-table/spikes/s0-mcp/out/hook-latency.log" } ] } ] } }

@@ -1,0 +1,1 @@
+{"mcpServers": {"spike": {"command": "/tmp/claude-0/-home-user-round-table/a4c4114c-77c9-520e-bf50-f84c37ad4fb6/scratchpad/node-v24.21.0-linux-x64/bin/node", "args": ["/home/user/round-table/spikes/s0-mcp/server.mjs"], "env": {"SPIKE_LOG": "/home/user/round-table/spikes/s0-mcp/out/t150p.log"}}}}
