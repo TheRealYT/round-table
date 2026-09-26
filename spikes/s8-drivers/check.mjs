@@ -112,7 +112,8 @@ if (!recipe) {
   console.error(`usage: node check.mjs <${Object.keys(RECIPES).join('|')}> [--bin <path>] [--turn-timeout <seconds>]`);
   process.exit(2);
 }
-const bin = values.bin ?? recipe.bin;
+// A path (./agy, ~/bin/agy) is made absolute: turns run inside the sample repo.
+const bin = values.bin ? (values.bin.includes('/') ? resolve(values.bin) : values.bin) : recipe.bin;
 
 // ── setup ────────────────────────────────────────────────────────────────────────────
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -151,7 +152,8 @@ const helpText = [spawnSync(bin, ['--help'], { env, encoding: 'utf8', timeout: 3
   .map((r) => `${r.stdout ?? ''}${r.stderr ?? ''}`)
   .join('\n');
 writeFileSync(join(out, 'help.txt'), helpText);
-const has = (flag) => new RegExp(`(^|[\\s,])${flag.replace(/[-]/g, '\\-')}([\\s,=<\\[]|$)`, 'm').test(helpText);
+// A flag counts when --help mentions it as a whole word: `--resume`, `[--resume <id>]`, `--resume=ID`.
+const has = (flag) => new RegExp(`(^|[^\\w-])${flag.replace(/[-]/g, '\\-')}(?![\\w-])`, 'm').test(helpText);
 
 const ctxBase = { work, server, has, ourId: randomUUID() };
 for (const [path, content] of Object.entries(recipe.files?.(ctxBase) ?? {})) {
@@ -165,7 +167,19 @@ note(recipe.verified ? `recipe verified: ${recipe.verified}` : 'recipe from the 
 
 // ── running turns ────────────────────────────────────────────────────────────────────
 let turnNo = 0;
+const results = [];
 let sessionId = null;
+let current = null;
+/** The last thing the running CLI printed, for the report if the run is stopped. */
+let lastSeen = 'nothing yet';
+
+// Ctrl+C: stop the CLI and still write the report with what the check saw so far.
+process.on('SIGINT', () => {
+  note('\nstopped by you (Ctrl+C)');
+  if (current) results.push({ name: `stopped in turn ${turnNo}`, pass: false, detail: `the CLI was still running; its last output: ${lastSeen}` });
+  current?.kill('SIGKILL');
+  finish(130);
+});
 
 /** One headless turn. Tries each candidate argument list until one exits 0 or produces output. */
 async function turn(prompt, first, options = {}) {
@@ -182,24 +196,72 @@ async function turn(prompt, first, options = {}) {
 function runOnce(args, { interruptWhen, interruptAfterMs, interruptAtMs } = {}) {
   const n = ++turnNo;
   writeFileSync(join(out, `turn${n}.args.json`), JSON.stringify([bin, ...args], null, 2));
+  const stdoutFile = join(out, `turn${n}.stdout.jsonl`);
+  const stderrFile = join(out, `turn${n}.stderr.txt`);
+  writeFileSync(stdoutFile, '');
+  writeFileSync(stderrFile, '');
+  note(`  $ ${[bin, ...args].map(shortArg).join(' ')}`);
+  note(`  live output: tail -f ${stdoutFile}`);
   return new Promise((done) => {
     const started = Date.now();
     const child = spawn(bin, args, { cwd: work, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    current = child;
     const lines = [];
     let stderr = '';
     let buffer = '';
+    let errBuffer = '';
     let interruptedAt = null;
+    let lastOutputAt = started;
+    let lastSummary = '';
+    let quietWarned = false;
+    const at = () => `[${String(Math.round((Date.now() - started) / 1000)).padStart(3)}s]`;
+    const show = (text) => {
+      lastSeen = `${at()} ${text}`;
+      if (text === lastSummary) return;
+      lastSummary = text;
+      console.log(`  ${at()} ${text}`);
+    };
     child.stdout.on('data', (d) => {
+      lastOutputAt = Date.now();
+      appendFileSync(stdoutFile, d);
       buffer += d;
       const parts = buffer.split('\n');
       buffer = parts.pop();
-      for (const l of parts) if (l.trim()) lines.push(l);
+      for (const l of parts) {
+        if (!l.trim()) continue;
+        lines.push(l);
+        const summary = summarize(l);
+        if (summary) show(summary);
+      }
     });
-    child.stderr.on('data', (d) => (stderr += d));
-    const kill = setTimeout(() => child.kill('SIGKILL'), TURN_MS);
+    child.stderr.on('data', (d) => {
+      lastOutputAt = Date.now();
+      appendFileSync(stderrFile, d);
+      stderr += d;
+      errBuffer += d;
+      const parts = errBuffer.split('\n');
+      errBuffer = parts.pop();
+      for (const l of parts) if (l.trim()) show(`stderr: ${clip(l, 160)}`);
+    });
+    // Heartbeat: say what's happening when the CLI is quiet, and what quiet usually means.
+    const heartbeat = setInterval(() => {
+      const quiet = Math.round((Date.now() - lastOutputAt) / 1000);
+      if (quiet < 10) return;
+      console.log(`  ${at()} … running, no output for ${quiet} s (gives up at ${TURN_MS / 1000} s; Ctrl+C stops and keeps the report)`);
+      if (quiet >= 30 && !quietWarned) {
+        quietWarned = true;
+        console.log(`         Quiet this long usually means ${bin} is waiting for something it can’t show here: a login, a “trust this folder” question or an approval prompt.`);
+        console.log(`         To see it, run the command above yourself in ${work}.`);
+      }
+    }, 10_000);
+    const kill = setTimeout(() => {
+      note(`  ${at()} no answer after ${TURN_MS / 1000} s: stopping ${bin}`);
+      child.kill('SIGKILL');
+    }, TURN_MS);
     const fire = () => {
       if (interruptedAt !== null) return;
       interruptedAt = Date.now();
+      note(`  ${at()} sending SIGINT (the interrupt check)`);
       child.kill('SIGINT');
     };
     // Interrupt `interruptAfterMs` after `interruptWhen()` first holds, or at `interruptAtMs` regardless.
@@ -208,6 +270,7 @@ function runOnce(args, { interruptWhen, interruptAfterMs, interruptAtMs } = {}) 
       ? setInterval(() => {
           if (!armed && interruptWhen()) {
             armed = true;
+            show('the hub tool call started; interrupting in 15 s');
             setTimeout(fire, interruptAfterMs);
           }
         }, 250)
@@ -217,9 +280,10 @@ function runOnce(args, { interruptWhen, interruptAfterMs, interruptAtMs } = {}) 
       clearTimeout(kill);
       clearTimeout(interrupt);
       clearInterval(watch);
+      clearInterval(heartbeat);
+      current = null;
       if (buffer.trim()) lines.push(buffer);
-      writeFileSync(join(out, `turn${n}.stdout.jsonl`), lines.join('\n'));
-      writeFileSync(join(out, `turn${n}.stderr.txt`), stderr);
+      note(`  ${at()} exited ${signal ? `by ${signal}` : `with code ${code}`}`);
       const events = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
       const id = findSessionId(events);
       if (id) sessionId = id;
@@ -227,9 +291,50 @@ function runOnce(args, { interruptWhen, interruptAfterMs, interruptAtMs } = {}) 
     });
     child.on('error', (error) => {
       clearTimeout(kill);
+      clearInterval(heartbeat);
+      current = null;
+      note(`  could not start ${bin}: ${error.message}`);
       done({ code: -1, signal: null, ms: 0, lines, events: [], stderr: error.message, interruptToExitMs: null });
     });
   });
+}
+
+function clip(text, max) {
+  const one = String(text).replace(/\s+/g, ' ').trim();
+  return one.length > max ? `${one.slice(0, max)}…` : one;
+}
+
+function shortArg(arg) {
+  const a = clip(arg, 60);
+  return /[\s"'{}$]/.test(a) ? `'${a.replace(/'/g, "'\\''")}'` : a;
+}
+
+/** One output line as a short progress note: tool calls, text, results. Streaming deltas are skipped. */
+function summarize(line) {
+  let e;
+  try {
+    e = JSON.parse(line);
+  } catch {
+    return `output: ${clip(line, 160)}`;
+  }
+  const type = [e.type, e.subtype ?? e.event?.type].filter(Boolean).join(':') || 'event';
+  if (/delta|stream_event|partial/i.test(type)) return null;
+  const tools = [];
+  const texts = [];
+  const stack = [e];
+  while (stack.length) {
+    const o = stack.pop();
+    if (!o || typeof o !== 'object') continue;
+    if (/tool_use|tool_call|function_call/.test(String(o.type ?? '')) && (o.name || o.tool || o.tool_name || o.toolName)) tools.push(o.name ?? o.tool ?? o.tool_name ?? o.toolName);
+    else if ((o.type === 'text' || o.type === 'agent_message' || o.type === 'message') && typeof o.text === 'string') texts.push(o.text);
+    for (const v of Object.values(o)) if (v && typeof v === 'object') stack.push(v);
+  }
+  if (e.type === 'user' || /tool_result/.test(type)) return texts.length ? `tool answered: “${clip(texts.join(' '), 100)}”` : null;
+  if (tools.length) return `calls ${tools.join(', ')}`;
+  if (texts.length) return `says: “${clip(texts.join(' '), 140)}”`;
+  // Bare status events only when they mark a start, an end or an error; the heartbeat covers the rest.
+  if (/init|start|result|complete|done|finish|error|fail/i.test(type)) return `${type}${e.is_error ? ' (error)' : ''}`;
+  return null;
 }
 
 /** The CLI's session id, whatever it calls it. */
@@ -275,7 +380,6 @@ function reports() {
 
 // ── the checks ───────────────────────────────────────────────────────────────────────
 const CODE = `PELICAN-${Math.floor(Math.random() * 900 + 100)}`;
-const results = [];
 const check = (name, pass, detail) => {
   results.push({ name, pass, detail });
   note(`${pass === true ? 'PASS' : pass === false ? 'FAIL' : 'N/A '}  ${name}: ${detail}`);
@@ -303,27 +407,35 @@ note('turn 4: continue after the interrupt …');
 const t4 = await turn(`Message from the hub: the sleep was cancelled on purpose. Call the report tool with "after interrupt, codeword <the codeword>". Then stop.`, false);
 const survived = reported(`after interrupt, codeword ${CODE}`);
 const waited = reported('fetch_plan started');
-check('5 interrupt', t3.interruptToExitMs !== null && t3.interruptToExitMs < 15_000 && survived, `${!waited ? 'it never called fetch_plan; ' : ''}${t3.interruptToExitMs === null ? 'the turn ended before the interrupt' : `stopped ${Math.round(t3.interruptToExitMs / 100) / 10} s after SIGINT`}; ${survived ? 'the next message ran in the same session' : `the next message did not continue the session (exit ${t4.code})`}`);
+if (t3.reason) check('5 interrupt', false, t3.reason);
+else check('5 interrupt', t3.interruptToExitMs !== null && t3.interruptToExitMs < 15_000 && survived, `${!waited ? 'it never called fetch_plan; ' : ''}${t3.interruptToExitMs === null ? 'the turn ended before the interrupt' : `stopped ${Math.round(t3.interruptToExitMs / 100) / 10} s after SIGINT`}; ${survived ? 'the next message ran in the same session' : `the next message did not continue the session (exit ${t4.code})`}`);
 
 // ── report ───────────────────────────────────────────────────────────────────────────
-writeFileSync(join(out, 'git-log.txt'), git('log', '--oneline'));
-const table = results.map((r) => `| ${r.name} | ${r.pass === true ? 'pass' : r.pass === false ? 'FAIL' : 'n/a'} | ${String(r.detail).replace(/\|/g, '\\|')} |`).join('\n');
-writeFileSync(join(out, 'report.md'), `# Round Table CLI check: ${kind}
+finish(results.some((r) => r.pass === false) ? 1 : 0);
 
-- CLI: ${bin} — ${version.stdout.trim().split('\n')[0]}
-- Recipe: ${recipe.verified ? `verified (${recipe.verified})` : 'from the CLI’s docs, first run'}
-- Session id seen: ${sessionId ?? 'none'}
-- Date: ${new Date().toISOString()}
-
-| Check | Result | Detail |
-|---|---|---|
-${table}
-
-Files: version.txt, help.txt, turnN.args.json (the exact command), turnN.stdout.jsonl, turnN.stderr.txt, board.log (hub tool calls), git-log.txt.
-`);
-const archive = `${out}.tar.gz`;
-spawnSync('tar', ['czf', archive, '-C', resolve(out, '..'), out.split('/').pop()]);
-const passed = results.filter((r) => r.pass === true).length;
-note(`\n${passed} of ${results.length} checks passed. Report: ${join(out, 'report.md')}`);
-note(existsSync(archive) ? `Send this file back: ${archive}` : `Send the folder back: ${out}`);
-process.exit(results.some((r) => r.pass === false) ? 1 : 0);
+function finish(exitCode) {
+  writeFileSync(join(out, 'git-log.txt'), git('log', '--oneline'));
+  const table = results.map((r) => `| ${r.name} | ${r.pass === true ? 'pass' : r.pass === false ? 'FAIL' : 'n/a'} | ${String(r.detail).replace(/\|/g, '\\|')} |`).join('\n');
+  const report = [
+    `# Round Table CLI check: ${kind}`,
+    '',
+    `- CLI: ${bin} — ${version.stdout.trim().split('\n')[0]}`,
+    `- Recipe: ${recipe.verified ? `verified (${recipe.verified})` : 'from the CLI’s docs, first run'}`,
+    `- Session id seen: ${sessionId ?? 'none'}`,
+    `- Date: ${new Date().toISOString()}${exitCode === 130 ? ' (stopped with Ctrl+C before the end)' : ''}`,
+    '',
+    '| Check | Result | Detail |',
+    '|---|---|---|',
+    table,
+    '',
+    'Files: version.txt, help.txt, turnN.args.json (the exact command), turnN.stdout.jsonl, turnN.stderr.txt, board.log (hub tool calls), git-log.txt, log.txt (what the check printed).',
+    '',
+  ];
+  writeFileSync(join(out, 'report.md'), report.join('\n'));
+  const archive = `${out}.tar.gz`;
+  spawnSync('tar', ['czf', archive, '-C', resolve(out, '..'), out.split('/').pop()]);
+  const passed = results.filter((r) => r.pass === true).length;
+  note(`\n${passed} of ${results.length} checks passed. Report: ${join(out, 'report.md')}`);
+  note(existsSync(archive) ? `Send this file back: ${archive}` : `Send the folder back: ${out}`);
+  process.exit(exitCode);
+}
