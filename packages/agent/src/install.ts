@@ -12,6 +12,8 @@ export interface InstallOptions {
   hubUrl: string;
   /** How to start the rt command: `[node, /path/to/cli/src/main.ts]`. */
   command: [string, ...string[]];
+  /** Extra environment for rt-agent (e.g. a custom RT_HOME); MCP clients may not pass theirs through. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -29,6 +31,7 @@ export function installClaudeCode(options: InstallOptions): { files: string[] } 
     roundtable: {
       command,
       args: [...prefix, 'agent', 'run', '--slot', options.slot, '--hub', options.hubUrl, '--client', 'claude-code', '--wait-max-ms', String(INSTALL_WAIT_MAX_MS)],
+      ...(options.env && Object.keys(options.env).length > 0 && { env: options.env }),
     },
   };
   writeJson(mcpPath, mcp);

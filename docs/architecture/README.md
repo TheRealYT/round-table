@@ -189,6 +189,8 @@ Each event may produce **delivery rows** `(projectId, agentId, sseq, priority, a
 
 A pending `wait` resolves **immediately** on a `human` or `critical` row, after a short coalescing window (~2 s) for `direct` and `normal`, and on timeout otherwise. The timeout is capped at 50 s by default, because MCP SDK clients time out requests at 60 s; S0 checks whether progress notifications let it grow.
 
+**Inline delivery (as built in S1).** When the pushed counts show human or critical items, rt-agent runs a zero-timeout `wait` itself after the model's tool call and appends the items under `[Round Table] messages for you:`, so they count as handed over and are acked on the next call. The banner subtracts items already handed over but not yet acked.
+
 **Piggyback.** The hub pushes inbox counts to `rt-agent` over the transport whenever they change. `rt-agent` appends a one-line banner to **every** Round Table tool result (`[Round Table] inbox: 3 messages waiting (1 human, 2 critical). Read with wait.`), a factual line defined in the MCP server instructions (S0), and puts `human`/`control` items inline. This is how an agent that is busy working, and not waiting, still sees the human first.
 
 ### 4.5 Identity, sessions, liveness

@@ -90,7 +90,8 @@ function agentInstall(args: string[]): void {
   if (!values.slot) throw new Error('--slot is required');
   const dir = resolve(values.dir ?? '.');
   const hubUrl = values.hub ?? readHubPointer()?.url ?? `ws://127.0.0.1:${DEFAULT_PORT}`;
-  const { files } = installClaudeCode({ dir, slot: values.slot, hubUrl, command: [process.execPath, MAIN] });
+  const env = process.env.RT_HOME ? { RT_HOME: process.env.RT_HOME } : undefined;
+  const { files } = installClaudeCode({ dir, slot: values.slot, hubUrl, command: [process.execPath, MAIN], ...(env && { env }) });
   console.log(`Installed Round Table for slot "${values.slot}" in ${dir}:`);
   for (const f of files) console.log(`  ${f}`);
   console.log(`\nStart Claude Code there and run the join prompt:\n  cd ${dir} && claude\n  > /mcp__roundtable__join`);

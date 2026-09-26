@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useCommand, useQuery } from '../hub.tsx';
 import { clock, shortId } from '../format.ts';
 import type { LogEvent, ProjectSummary, RosterRecord } from '../types.ts';
@@ -62,9 +62,24 @@ function AgentCard({ agent, projectId }: { agent: RosterRecord; projectId: strin
 
 function Feed({ events, names }: { events: LogEvent[]; names: Map<string, string> }) {
   const who = (id: string) => (id.startsWith('human:') ? 'You' : names.get(id) ?? shortId(id));
+  const list = useRef<HTMLOListElement>(null);
+  const pinned = useRef(true);
+  // Follow new events while the reader is at the bottom; leave the scroll alone if they scrolled up.
+  useEffect(() => {
+    const el = list.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [events.length]);
   if (events.length === 0) return <p className="empty">Nothing yet.</p>;
   return (
-    <ol className="feed" aria-live="polite">
+    <ol
+      className="feed"
+      aria-live="polite"
+      ref={list}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      }}
+    >
       {events.map((e) => {
         const p = e.payload;
         if (e.type === 'human.posted' || e.type === 'message.sent') {
