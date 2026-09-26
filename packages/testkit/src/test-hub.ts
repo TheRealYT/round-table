@@ -1,6 +1,6 @@
 import { authenticate, confirmJoin, HubClient, requestJoin, type Identity, type SessionInfo } from '@round-table/agent';
 import type { Settings } from '@round-table/core';
-import { Hub, type HubConfig } from '@round-table/hub';
+import { Hub, type AgentHost, type Driver, type HubConfig, type SecretStore } from '@round-table/hub';
 import { MemoryNetwork } from '@round-table/protocol';
 import { generateIdentityKey, type KeyPair } from '@round-table/protocol/crypto';
 import { FakeClock } from './fake-clock.ts';
@@ -13,6 +13,10 @@ export interface TestHubOptions {
   clock?: FakeClock;
   settings?: Partial<Settings>;
   config?: Partial<HubConfig>;
+  /** Hub-run agents (ADR-0018): usually FakeAgentHost and FakeDriver. */
+  agentHost?: AgentHost;
+  drivers?: Partial<Record<string, Driver>>;
+  secrets?: SecretStore;
 }
 
 export interface PairedAgent {
@@ -44,7 +48,10 @@ export class TestHub {
       random: new SeededRandom(),
       autoTimers: false,
       ...(options.settings && { settings: options.settings }),
-      config: { waitMaxMs: 2_000, coalesceMs: 0, ...options.config },
+      config: { waitMaxMs: 2_000, coalesceMs: 0, restartDelaysMs: [10, 10], ...options.config },
+      ...(options.agentHost && { agentHost: options.agentHost }),
+      ...(options.drivers && { drivers: options.drivers }),
+      ...(options.secrets && { secrets: options.secrets }),
     });
     this.hub.listen(this.network);
   }

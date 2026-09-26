@@ -6,10 +6,14 @@ import {
   type EventRow,
   type PairingId,
   type PrincipalKind,
+  type ProviderId,
   type StreamId,
+  PROVIDER_KINDS,
+  providerKind,
 } from '@round-table/protocol';
 import {
   fingerprint,
+  generateIdentityKey,
   generatePairingCode,
   hashPairingCode,
   joinConfirmMessage,
@@ -68,9 +72,68 @@ export class Router {
           records: out.records.map((r) => {
             const id = r.agentId as AgentId;
             const seen = this.attention.get(id);
-            return { ...r, attention: seen ?? null, next: project.roster[id] ? nextStep(hub.model, project.projectId, id) : null };
+            const driven = hub.model.agents[id]?.driven ?? null;
+            return {
+              ...r,
+              attention: seen ?? null,
+              next: project.roster[id] ? nextStep(hub.model, project.projectId, id) : null,
+              // Hub-run agents (ADR-0018): the supervisor knows exactly what they are doing.
+              driven: driven && {
+                providerId: driven.providerId,
+                run: driven.run,
+                turns: driven.turns,
+                costUsd: driven.costUsd,
+                inputTokens: driven.inputTokens,
+                outputTokens: driven.outputTokens,
+                lastTurnAt: driven.lastTurnAt,
+                live: hub.supervisor?.state(id) ?? { status: 'stopped', since: 0, lastError: 'this hub was started without an agent host', tool: null },
+              },
+            };
           }),
         };
+      },
+      'provider.list': () => ({
+        kinds: PROVIDER_KINDS,
+        canRun: hub.agentHost !== undefined,
+        providers: Object.values(hub.model.providers)
+          .filter((p) => !p.removed)
+          .map((p) => {
+            const agents = Object.values(hub.model.agents).filter((a) => a.driven?.providerId === p.providerId && !a.revoked);
+            return {
+              ...p,
+              running: agents.filter((a) => a.driven!.run).length,
+              agents: agents.map((a) => ({ agentId: a.agentId, name: a.name, projectId: a.projectId, run: a.driven!.run, costUsd: a.driven!.costUsd, live: hub.supervisor?.state(a.agentId) ?? null })),
+            };
+          }),
+      }),
+      'provider.detect': async (_session, input: { kind: string; command: string }) => {
+        const def = providerKind(input.kind)!;
+        const driver = hub.drivers[input.kind];
+        if (driver) return driver.detect(input.command);
+        const { detectBinary } = await import('./drivers/process.ts');
+        return detectBinary(input.command || def.binary);
+      },
+      'provider.test': async (_session, input: { providerId: ProviderId }) => {
+        const provider = hub.model.providers[input.providerId];
+        if (!provider || provider.removed) throw new RpcError('rejected', 'no such provider');
+        const kind = providerKind(provider.settings.kind)!;
+        const driver = hub.drivers[provider.settings.kind];
+        if (!driver) return { ok: false, message: `Round Table can’t run ${kind.label} yet: its driver hasn’t passed the check.`, ms: 0, costUsd: null };
+        const env: Record<string, string> = {};
+        if (provider.settings.auth === 'api-key') {
+          const secret = hub.secrets.get(provider.providerId);
+          if (!secret) return { ok: false, message: 'No API key is set.', ms: 0, costUsd: null };
+          env[kind.apiKeyEnv] = secret;
+        }
+        return driver.test({ command: provider.settings.command, env, model: provider.settings.model });
+      },
+      'agent.interrupt': (session, input: { projectId: string; agentId: string }) => {
+        this.drivenIn(session, input.projectId, input.agentId);
+        return { ok: hub.supervisor?.interrupt(input.agentId) ?? false };
+      },
+      'agent.transcript': (session, input: { projectId: string; agentId: string }) => {
+        this.drivenIn(session, input.projectId, input.agentId);
+        return { entries: hub.supervisor?.transcript(input.agentId) ?? [], live: hub.supervisor?.state(input.agentId) ?? null };
       },
       board_view: (session, input: { view: string; projectId?: string }) =>
         boardView(hub.model, this.project(session, input.projectId), input.view, agentOf(session)?.agentId as AgentId | undefined),
@@ -146,6 +209,34 @@ export class Router {
           }),
         };
       },
+      // The value goes to the secret store only; the command (and so the log) sees whether one is set.
+      'provider.secret': (session, input: { providerId: ProviderId; value: string | null }) => {
+        const provider = hub.model.providers[input.providerId];
+        if (!provider || provider.removed) throw new RpcError('rejected', 'no such provider');
+        if (input.value === null) hub.secrets.delete(input.providerId);
+        else hub.secrets.set(input.providerId, input.value.trim());
+        hub.bus.dispatch('provider.secret_mark', { providerId: input.providerId, set: input.value !== null }, { kind: 'hub', component: 'router' });
+        return { ok: true };
+      },
+      // One key pair per agent, made here: core sees only the public half, the host stores the identity.
+      'agent.spawn': async (session, input: { projectId: string; providerId: string; names: string[]; tags: string[] }) => {
+        if (!hub.agentHost || !hub.supervisor) throw new RpcError('rejected', 'this hub was started without an agent host, so it can’t run agents');
+        const started: Array<{ name: string; agentId: string }> = [];
+        const failed: Array<{ name: string; error: string }> = [];
+        for (const raw of input.names) {
+          const name = raw.trim();
+          const key = generateIdentityKey();
+          try {
+            const out = this.dispatch(session, 'agent.spawn', { projectId: input.projectId, providerId: input.providerId, name, tags: input.tags, publicKey: key.publicKey, fingerprint: fingerprint(key.publicKey) }) as { agentId: string };
+            // The supervisor starts it as soon as the identity is stored.
+            await hub.supervisor.provisioning(out.agentId, hub.agentHost.provision({ agentId: out.agentId, name, hubId: hub.hubId, hubPublicKey: hub.hubKey.publicKey, key }));
+            started.push({ name, agentId: out.agentId });
+          } catch (error) {
+            failed.push({ name, error: error instanceof Error ? error.message : String(error) });
+          }
+        }
+        return { started, failed };
+      },
       'pairing.allow': (session, input: object) => {
         const code = generatePairingCode();
         const out = this.dispatch(session, 'pairing.allow', { ...input, codeHash: hashPairingCode(code) }) as { projectId: string; expiresAt: number };
@@ -187,6 +278,12 @@ export class Router {
     if (code === 'unknown_command') throw new RpcError('unknown_procedure', `${name} is not built yet (see docs/architecture/build-plan.md)`);
     if (code === 'internal') throw new RpcError('internal', message);
     throw new RpcError('rejected', message, { code, ...details });
+  }
+
+  /** A hub-run agent in the project the human names. */
+  private drivenIn(session: Session, projectId: string, agentId: string): void {
+    const agent = this.hub.model.agents[agentId as AgentId];
+    if (!agent?.driven || agent.projectId !== this.projectFor(session, projectId)) throw new RpcError('rejected', 'no agent the hub runs with that id in this project');
   }
 
   private project(session: Session, projectId: string | undefined): ProjectRecord {

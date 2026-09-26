@@ -13,6 +13,10 @@ import { Router } from './router.ts';
 import { TimerScheduler } from './scheduler.ts';
 import { SqliteEventStore } from './sqlite-store.ts';
 import { Waiters } from './waiters.ts';
+import { ClaudeCodeDriver } from './drivers/claude-code.ts';
+import type { Driver } from './drivers/driver.ts';
+import { MemorySecretStore, type SecretStore } from './secrets.ts';
+import { Supervisor, type AgentHost } from './supervisor.ts';
 
 export interface HubOptions {
   /** SQLite file, or ':memory:' for tests. */
@@ -30,6 +34,12 @@ export interface HubOptions {
   git?: GitHost;
   tests?: TestRunner;
   log?: (message: string) => void;
+  /** Where hub-run agents get their identity, worktree and MCP server (ADR-0018). Without it the hub can't run agents. */
+  agentHost?: AgentHost;
+  /** Provider credentials (default: in memory). */
+  secrets?: SecretStore;
+  /** Drivers by provider kind (default: the verified ones). */
+  drivers?: Partial<Record<string, Driver>>;
 }
 
 /** rt-hub: the IO shell around the pure core (architecture §3). */
@@ -40,6 +50,7 @@ export class Hub {
   readonly bus: Bus;
   readonly scheduler: TimerScheduler;
   readonly merges: MergeReactor;
+  readonly supervisor: Supervisor | undefined;
   private readonly gateway: Gateway;
   private readonly waiters: Waiters;
   private readonly humanSessions = new Set<string>();
@@ -64,6 +75,11 @@ export class Hub {
     this.waiters = new Waiters({ coalesceMs: config.coalesceMs });
 
     const git = options.git ?? new LocalGitHost();
+    const secrets = options.secrets ?? new MemorySecretStore();
+    const drivers = options.drivers ?? { 'claude-code': new ClaudeCodeDriver() };
+    this.supervisor = options.agentHost
+      ? new Supervisor({ model: this.model, bus: this.bus, store: this.store, secrets, host: options.agentHost, drivers, now: () => clock.now(), maxChars: config.waitMaxChars, restartDelaysMs: config.restartDelaysMs, ...(options.log && { log: options.log }) })
+      : undefined;
     const internals: HubInternals = {
       hubId: this.hubId,
       hubKey: options.hubKey,
@@ -75,6 +91,10 @@ export class Hub {
       clock,
       config,
       pushInbox: (agentId) => this.gateway.pushInbox(agentId),
+      supervisor: this.supervisor,
+      agentHost: options.agentHost,
+      secrets,
+      drivers,
     };
     this.gateway = new Gateway(internals, new Router(internals), (cookie) => this.humanSessions.has(cookie));
 
@@ -98,6 +118,11 @@ export class Hub {
       for (const entry of Object.values(project.roster)) {
         if (entry.connected) this.bus.dispatch('session.closed', { agentId: entry.agentId, epoch: entry.epoch }, { kind: 'hub', component: 'startup' });
       }
+    }
+    if (this.supervisor) {
+      const supervisor = this.supervisor;
+      this.bus.onCommit((rows) => supervisor.onCommit(rows));
+      supervisor.resumeAll();
     }
     this.scheduler.start((timer) => {
       this.bus.dispatch(timer.command.name, timer.command.input, { kind: 'hub', component: 'scheduler' }, { timerId: timer.timerId });
@@ -136,6 +161,7 @@ export class Hub {
   }
 
   close(): void {
+    this.supervisor?.close();
     this.bus.close();
     this.scheduler.stop();
     this.waiters.cancelAll();

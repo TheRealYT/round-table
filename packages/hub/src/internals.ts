@@ -4,6 +4,9 @@ import type { Bus } from './command-bus.ts';
 import type { GitHost } from './git.ts';
 import type { SqliteEventStore } from './sqlite-store.ts';
 import type { Waiters } from './waiters.ts';
+import type { Driver } from './drivers/driver.ts';
+import type { SecretStore } from './secrets.ts';
+import type { AgentHost, Supervisor } from './supervisor.ts';
 
 /** What the gateway and router share. Built by `Hub`. */
 export interface HubInternals {
@@ -17,6 +20,11 @@ export interface HubInternals {
   clock: Clock;
   config: HubConfig;
   pushInbox(agentId: string): void;
+  /** Hub-run agents (ADR-0018); absent when the hub was started without an agent host. */
+  supervisor: Supervisor | undefined;
+  agentHost: AgentHost | undefined;
+  secrets: SecretStore;
+  drivers: Partial<Record<string, Driver>>;
 }
 
 export interface HubConfig {
@@ -28,6 +36,8 @@ export interface HubConfig {
   waitMaxChars: number;
   /** How long a rejoin challenge stays valid (spec: under 30 s). */
   challengeTtlMs: number;
+  /** Backoff before restarting a crashed hub-run agent; after the last one it waits for the human. */
+  restartDelaysMs: number[];
 }
 
 export const DEFAULT_HUB_CONFIG: HubConfig = {
@@ -35,4 +45,5 @@ export const DEFAULT_HUB_CONFIG: HubConfig = {
   coalesceMs: 2_000,
   waitMaxChars: 8_000,
   challengeTtlMs: 30_000,
+  restartDelaysMs: [2_000, 5_000, 15_000, 30_000, 60_000],
 };

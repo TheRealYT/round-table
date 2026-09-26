@@ -13,3 +13,8 @@ export * from './http.ts';
 export * from './keyfile.ts';
 export * from './local-git.ts';
 export * from './merge-reactor.ts';
+export * from './secrets.ts';
+export * from './supervisor.ts';
+export * from './drivers/driver.ts';
+export * from './drivers/claude-code.ts';
+export { agentEnv, detectBinary } from './drivers/process.ts';

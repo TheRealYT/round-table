@@ -6,7 +6,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CLIENTS, clientProfile, createAgentWorktree, FileKeyStore, installAgent, rtHome, runAgentStdio } from '@round-table/agent';
-import { createHttpServer, Hub, loadOrCreateHubKey } from '@round-table/hub';
+import { createHttpServer, FileSecretStore, Hub, loadOrCreateHubKey } from '@round-table/hub';
+import { FolderAgentHost } from './agent-host.ts';
 import { WsConnector, WsListener } from '@round-table/protocol/ws';
 import { randomToken } from '@round-table/protocol/crypto';
 
@@ -18,7 +19,7 @@ const COMMANDS: Record<string, { slice: string; usage: string; summary: string }
   'hub start': { slice: 'S1', usage: '[--port 7777] [--data <dir>] [--app <dir>]', summary: 'Start the hub on 127.0.0.1 and print the one-time login URL.' },
   'hub login': { slice: 'S1', usage: '', summary: 'Print a new one-time login link for the running hub.' },
   demo: { slice: 'S1', usage: '[--dir <path>] [--client <id>] [--agents lead,ada,bo]', summary: 'Create a sample repo and one worktree per agent, installed for a client, and print what to do next.' },
-  'agent run': { slice: 'S1', usage: '[--slot <name>] [--client <id>] [--hub <url>] [--wait-max-ms <n>] [--tools dynamic|static]', summary: 'Run rt-agent on stdio (what an agent\'s MCP client starts).' },
+  'agent run': { slice: 'S1', usage: '[--slot <name>] [--client <id>] [--hub <url>] [--wait-max-ms <n>] [--tools dynamic|static] [--driven]', summary: 'Run rt-agent on stdio (what an agent\'s MCP client starts).' },
   'agent install': { slice: 'S1', usage: '--client <id> [--slot <name>] [--dir <path>] [--repo <path> [--main <branch>]] [--hub <url>]', summary: `Write <dir>'s MCP config for a client so it runs rt-agent. Clients: ${Object.keys(CLIENTS).join(', ')}.` },
   hook: { slice: 'S6', usage: 'pre-tool-use | post-tool-use', summary: 'Hook adapter entry point, called by the agent client.' },
   supervise: { slice: 'S4', usage: '', summary: 'Restart dead agent sessions (D3).' },
@@ -51,7 +52,15 @@ async function hubStart(args: string[]): Promise<void> {
   const { values } = parseArgs({ args, options: { port: { type: 'string' }, data: { type: 'string' }, app: { type: 'string' } } });
   const port = Number(values.port ?? DEFAULT_PORT);
   const dataDir = resolve(values.data ?? join(rtHome(), 'hub'));
-  const hub = new Hub({ storePath: join(dataDir, 'hub.db'), hubKey: loadOrCreateHubKey(dataDir) });
+  // The hub runs agents from the providers set up in the app (ADR-0018); their rt-agent is this CLI.
+  const agentHost = new FolderAgentHost({ dataDir, hubUrl: `ws://127.0.0.1:${port}`, rtAgent: [process.execPath, MAIN] });
+  const hub = new Hub({
+    storePath: join(dataDir, 'hub.db'),
+    hubKey: loadOrCreateHubKey(dataDir),
+    agentHost,
+    secrets: new FileSecretStore(join(dataDir, 'secrets.json')),
+    log: (m) => console.log(m),
+  });
   const adminSecret = randomToken();
   const adminSecretPath = join(dataDir, 'admin-secret');
   writeFileSync(adminSecretPath, adminSecret, { mode: 0o600 });
@@ -92,7 +101,7 @@ async function hubLogin(): Promise<void> {
 async function agentRun(args: string[]): Promise<void> {
   const { values } = parseArgs({
     args,
-    options: { slot: { type: 'string' }, hub: { type: 'string' }, client: { type: 'string' }, 'wait-max-ms': { type: 'string' }, tools: { type: 'string' } },
+    options: { slot: { type: 'string' }, hub: { type: 'string' }, client: { type: 'string' }, 'wait-max-ms': { type: 'string' }, tools: { type: 'string' }, driven: { type: 'boolean' } },
   });
   // Without --slot, each agent's identity comes from the name it joins with, so one server can carry
   // several agents (e.g. several chats of one IDE); with --slot, this server is exactly one agent.
@@ -108,7 +117,8 @@ async function agentRun(args: string[]): Promise<void> {
     clientName: values.client ?? 'mcp-client',
     waitMaxMs: Number(values['wait-max-ms'] ?? profile.waitMaxMs),
     tools,
-    briefing: !profile.instructions,
+    briefing: !profile.instructions && !values.driven,
+    driven: values.driven ?? false,
   });
 }
 

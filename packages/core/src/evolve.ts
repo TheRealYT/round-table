@@ -80,7 +80,56 @@ const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
       epoch: 0,
       revoked: false,
       pairedAt: e.ts,
+      driven: null,
     };
+  },
+  'provider.saved': (m, p, e) => {
+    const existing = m.providers[p.providerId];
+    if (existing) existing.settings = p.settings;
+    else m.providers[p.providerId] = { providerId: p.providerId, settings: p.settings, hasSecret: false, createdAt: e.ts, removed: false };
+  },
+  'provider.removed': (m, p) => {
+    const r = m.providers[p.providerId];
+    if (r) r.removed = true;
+  },
+  'provider.secret_changed': (m, p) => {
+    const r = m.providers[p.providerId];
+    if (r) r.hasSecret = p.set;
+  },
+  'agent.provisioned': (m, p, e) => {
+    m.agents[p.agentId] = {
+      agentId: p.agentId,
+      name: p.name,
+      client: m.providers[p.providerId]?.settings.kind ?? 'driven',
+      tags: p.tags,
+      capabilities: [],
+      publicKey: p.publicKey,
+      fingerprint: p.fingerprint,
+      projectId: p.projectId,
+      epoch: 0,
+      revoked: false,
+      pairedAt: e.ts,
+      driven: { providerId: p.providerId, run: false, cliSessionId: null, sessionCostUsd: 0, turns: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, lastTurnAt: null, lastError: null },
+    };
+  },
+  'agent.run_requested': (m, p) => {
+    const d = m.agents[p.agentId]?.driven;
+    if (d) d.run = p.run;
+  },
+  'agent.cli_session': (m, p) => {
+    const d = m.agents[p.agentId]?.driven;
+    if (d) Object.assign(d, { cliSessionId: p.cliSessionId, sessionCostUsd: 0 });
+  },
+  'agent.turn_finished': (m, p, e) => {
+    const d = m.agents[p.agentId]?.driven;
+    if (!d) return;
+    d.turns += 1;
+    d.costUsd += p.costUsd ?? 0;
+    if (p.sessionCostUsd !== null) d.sessionCostUsd = p.sessionCostUsd;
+    d.inputTokens += p.inputTokens;
+    d.outputTokens += p.outputTokens;
+    d.lastTurnAt = e.ts;
+    d.lastError = p.error;
   },
   'session.opened': (m, p) => {
     const a = m.agents[p.agentId];

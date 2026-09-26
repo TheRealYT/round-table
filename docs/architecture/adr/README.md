@@ -19,5 +19,6 @@
 | [0015](0015-round-table-drives-the-loop.md) | The Round Table drives the agent loop |
 | [0016](0016-identity-by-join-name.md) | Agent identity by join name, not by config |
 | [0017](0017-a-name-is-not-a-password.md) | A name is not a password: chat tokens and human-approved takeover |
+| [0018](0018-round-table-runs-the-agents.md) | Round Table runs the agents |
 
 New decisions get the next number. A decision that deviates from the spec also gets a row in [spec-gaps.md](../spec-gaps.md) and needs the human's approval.

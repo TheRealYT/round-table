@@ -5,7 +5,10 @@ import { HubClient, mcpToolsFor, PROCEDURES, type PrincipalKind, type ProcedureD
 import { AgentSession, type Role } from './agent-session.ts';
 import { STATUS_PREFIX } from './banner.ts';
 import { assertSlot } from './identity.ts';
-import { serverInstructions, TOOL_DESCRIPTIONS } from './instructions.ts';
+import { drivenInstructions, serverInstructions, TOOL_DESCRIPTIONS } from './instructions.ts';
+
+/** Tools a driven agent doesn't get: the hub paired it and delivers its messages as turns. */
+const NOT_DRIVEN = new Set(['join_request', 'join_confirm', 'rejoin', 'wait']);
 import type { KeyStore } from './keystore.ts';
 
 export interface BridgeOptions {
@@ -29,6 +32,8 @@ export interface BridgeOptions {
   tools?: 'dynamic' | 'static';
   /** Add the protocol briefing to the first tool result, for clients that may not show server instructions. */
   briefing?: boolean;
+  /** The hub runs this agent (ADR-0018): no pairing, no wait; messages arrive as turns. Needs a slot. */
+  driven?: boolean;
   now?: () => number;
   log?: (message: string) => void;
   /** Reconnect backoff after the hub connection drops. */
@@ -95,14 +100,16 @@ export class AgentBridge {
       reconnect: { initialMs: 500, maxMs: 15_000 },
       tools: 'dynamic',
       briefing: false,
+      driven: false,
       ...options,
     };
+    if (options.driven && options.slot === undefined) throw new Error('driven mode needs a slot');
     this.named = options.slot === undefined;
     this.server = new McpServer(
       { name: 'roundtable', version: '0.1.0' },
-      { instructions: serverInstructions(Math.round(options.waitMaxMs / 1000), options.slot === undefined), capabilities: { tools: { listChanged: true } } },
+      { instructions: options.driven ? drivenInstructions() : serverInstructions(Math.round(options.waitMaxMs / 1000), options.slot === undefined), capabilities: { tools: { listChanged: true } } },
     );
-    for (const def of PROCEDURES.filter((p) => p.mcp)) this.register(def);
+    for (const def of PROCEDURES.filter((p) => p.mcp && !(options.driven && NOT_DRIVEN.has(p.name)))) this.register(def);
     this.server.registerPrompt(
       'join',
       { description: 'Join the Round Table: pair this session with the hub, or resume if already paired.' },
@@ -142,6 +149,7 @@ export class AgentBridge {
     return new AgentSession({
       slot,
       named: this.named,
+      driven: this.options.driven,
       connector: this.options.connector,
       keyStore: this.options.keyStore,
       clientName: this.options.clientName,
@@ -179,7 +187,7 @@ export class AgentBridge {
   private applyTools(): void {
     let visible: Set<string>;
     const only = [...this.sessions.values()][0];
-    if (this.named || this.options.tools === 'static') visible = new Set(this.tools.keys());
+    if (this.named || this.options.tools === 'static' || this.options.driven) visible = new Set(this.tools.keys());
     else if (!only || only.fenced) visible = new Set();
     else if (only.role !== 'unpaired') visible = new Set(mcpToolsFor(only.role as PrincipalKind).map((p) => p.name));
     else if (only.identity) visible = new Set(['rejoin']);

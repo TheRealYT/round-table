@@ -5,6 +5,7 @@ import { createProject } from './projects.ts';
 import { commit, humanEdit, propose, rejectTicket } from './board.ts';
 import { mergeResult, openRequest, respond } from './changes.ts';
 import { attachRepo } from './repos.ts';
+import { markProviderSecret, recordCliSession, recordTurn, removeProvider, saveProvider, setAgentRun, spawnAgent } from './drivers.ts';
 import { approvePlan, claim, release } from './tasks.ts';
 import { assignLeader, closeSession, markGone, markStale, openSession } from './sessions.ts';
 
@@ -35,6 +36,14 @@ export const COMMANDS: Record<string, CommandHandler> = {
   release,
   request: openRequest,
   respond,
+  'provider.save': saveProvider,
+  'provider.remove': removeProvider,
+  'agent.spawn': spawnAgent,
+  'agent.run': setAgentRun,
+  // internal: router (credentials) and supervisor
+  'provider.secret_mark': markProviderSecret,
+  'agent.cli_session': recordCliSession,
+  'agent.turn': recordTurn,
   // internal: merge reactor
   'merge.result': mergeResult,
   // internal: gateway
@@ -48,6 +57,9 @@ export const COMMANDS: Record<string, CommandHandler> = {
 };
 
 export const INTERNAL_COMMANDS = new Set([
+  'provider.secret_mark',
+  'agent.cli_session',
+  'agent.turn',
   'merge.result',
   'session.open',
   'session.closed',

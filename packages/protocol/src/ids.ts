@@ -21,6 +21,7 @@ export const ID_PREFIX = {
   subscription: 'sub',
   lock: 'lck',
   repo: 'rep',
+  provider: 'prv',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIX;
@@ -53,6 +54,8 @@ export const PairingId = idSchema('pairing');
 export type PairingId = z.infer<typeof PairingId>;
 export const RepoId = idSchema('repo');
 export type RepoId = z.infer<typeof RepoId>;
+export const ProviderId = idSchema('provider');
+export type ProviderId = z.infer<typeof ProviderId>;
 
 /** A git object id (sha-1 or sha-256). */
 export const Sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).brand<'sha'>();

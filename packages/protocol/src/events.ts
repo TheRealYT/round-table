@@ -1,4 +1,5 @@
-import type { AgentId, ChangeRequestId, EntryId, PairingId, ProjectId, RepoId, RequestId, Sha, TaskId, TicketId } from './ids.ts';
+import type { AgentId, ChangeRequestId, EntryId, PairingId, ProjectId, ProviderId, RepoId, RequestId, Sha, TaskId, TicketId } from './ids.ts';
+import type { ProviderSettings } from './providers.ts';
 import type { Criticality } from './entry.ts';
 import type { Refs } from './event.ts';
 import type { MessageType, Priority } from './message.ts';
@@ -44,6 +45,19 @@ export interface EventPayloads {
   };
   /** The human approved a new chat continuing as an existing agent (ADR-0017). */
   'pairing.resumed': { requestId: PairingId; agentId: AgentId; projectId: ProjectId };
+  // ── providers and driven agents (ADR-0018) ──
+  'provider.saved': { providerId: ProviderId; settings: ProviderSettings };
+  'provider.removed': { providerId: ProviderId };
+  /** A credential was stored or cleared by the hub; the value itself never enters the log. */
+  'provider.secret_changed': { providerId: ProviderId; set: boolean };
+  /** The hub started an agent from a provider: it issued the identity itself (no pairing). */
+  'agent.provisioned': { agentId: AgentId; projectId: ProjectId; providerId: ProviderId; name: string; tags: string[]; publicKey: string; fingerprint: string };
+  /** The human wants the agent running or stopped; the supervisor follows it, also after restarts. */
+  'agent.run_requested': { agentId: AgentId; run: boolean };
+  /** The CLI's own session id, so a restarted process resumes the same conversation. */
+  'agent.cli_session': { agentId: AgentId; cliSessionId: string };
+  /** One finished turn, as the CLI reported it. */
+  'agent.turn_finished': { agentId: AgentId; ok: boolean; durationMs: number; costUsd: number | null; sessionCostUsd: number | null; inputTokens: number; outputTokens: number; error: string | null };
   'session.opened': { agentId: AgentId; projectId: ProjectId; epoch: number };
   'leader.assigned': { projectId: ProjectId; agentId: AgentId; previous: AgentId | null };
   // ── project stream ──
@@ -157,6 +171,13 @@ export const EVENT_DURABILITY: { [K in EventType]: Durability } = {
   'agent.paired': 'durable',
   'pairing.resumed': 'durable',
   'session.opened': 'durable',
+  'provider.saved': 'durable',
+  'provider.removed': 'durable',
+  'provider.secret_changed': 'durable',
+  'agent.provisioned': 'durable',
+  'agent.run_requested': 'durable',
+  'agent.cli_session': 'durable',
+  'agent.turn_finished': 'durable',
   'leader.assigned': 'durable',
   'roster.joined': 'durable',
   'roster.connected': 'ephemeral',

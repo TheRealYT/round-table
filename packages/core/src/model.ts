@@ -1,4 +1,4 @@
-import type { AgentId, ChangeRequestId, Criticality, EntryId, PairingId, ProjectId, RepoId, RequestId, Sha, TaskId, TicketId } from '@round-table/protocol';
+import type { AgentId, ChangeRequestId, Criticality, EntryId, PairingId, ProjectId, ProviderId, ProviderSettings, RepoId, RequestId, Sha, TaskId, TicketId } from '@round-table/protocol';
 import type { TaskStatus } from './tasks/status.ts';
 
 /**
@@ -13,6 +13,33 @@ export interface Model {
   projects: Record<ProjectId, ProjectRecord>;
   repos: Record<RepoId, RepoRecord>;
   timers: Record<string, TimerRecord>;
+  /** Configured CLIs agents are started from (ADR-0018). */
+  providers: Record<ProviderId, ProviderRecord>;
+}
+
+export interface ProviderRecord {
+  providerId: ProviderId;
+  settings: ProviderSettings;
+  /** The hub holds a credential for it (the value lives outside the log). */
+  hasSecret: boolean;
+  createdAt: number;
+  removed: boolean;
+}
+
+/** A hub-run agent (ADR-0018): what the supervisor needs to start, resume and account for it. */
+export interface DrivenAgent {
+  providerId: ProviderId;
+  /** The human's wish; the supervisor follows it, also after hub restarts. */
+  run: boolean;
+  cliSessionId: string | null;
+  /** The CLI's running cost total for the current session (it reports cumulative totals). */
+  sessionCostUsd: number;
+  turns: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  lastTurnAt: number | null;
+  lastError: string | null;
 }
 
 export interface RepoRecord {
@@ -57,6 +84,8 @@ export interface AgentRecord {
   epoch: number;
   revoked: boolean;
   pairedAt: number;
+  /** Set for agents the hub runs; null for agents that paired from their own session. */
+  driven: DrivenAgent | null;
 }
 
 export type RosterState = 'active' | 'stale' | 'gone' | 'left' | 'removed';
@@ -179,5 +208,5 @@ export interface TimerRecord {
 }
 
 export function initialModel(): Model {
-  return { pairing: {}, blockedOrigins: {}, agents: {}, projects: {}, repos: {}, timers: {} };
+  return { pairing: {}, blockedOrigins: {}, agents: {}, projects: {}, repos: {}, timers: {}, providers: {} };
 }

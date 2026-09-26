@@ -11,7 +11,7 @@ import { authenticate, confirmJoin, requestJoin, type HubInfo, type SessionInfo 
 import { inboxBanner, STATUS_PREFIX } from './banner.ts';
 import { formatItems, formatResult, type WaitItem } from './format.ts';
 import type { Identity } from './identity.ts';
-import { briefing, LOOP_REMINDER, PAIRED_WELCOME, roleBrief, TOKEN_NOTE } from './instructions.ts';
+import { briefing, DRIVEN_REMINDER, LOOP_REMINDER, PAIRED_WELCOME, roleBrief, TOKEN_NOTE } from './instructions.ts';
 import type { KeyStore, PendingJoin } from './keystore.ts';
 
 export type Role = 'unpaired' | 'worker' | 'leader';
@@ -23,6 +23,8 @@ export interface SessionOptions {
    * agent with its chat token. A stored key alone never lets a chat in.
    */
   named: boolean;
+  /** The hub runs this agent (ADR-0018): its messages arrive as turns, so rt-agent never fetches them. */
+  driven: boolean;
   connector: TransportConnector;
   keyStore: KeyStore;
   clientName: string;
@@ -311,6 +313,11 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
   /** The piggyback status line (ADR-0001): human and critical messages inline, other mail as counts. */
   private async statusLine(hub: HubClient, tool: string): Promise<string> {
     if (tool === 'wait' || this.role === 'unpaired') return '';
+    if (this.o.driven) {
+      // The hub delivers the messages as the next turn; say only that the human is waiting.
+      const c = this.counts;
+      return c.human + c.critical > 0 ? `${STATUS_PREFIX} the human or a critical alert is waiting for you: finish this step and end your turn to read it.` : '';
+    }
     const pending = this.pendingCounts();
     if (pending.human + pending.critical > 0) {
       const out = await this.fetch(hub, { timeoutMs: 1 });
@@ -328,6 +335,11 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
       this.roleChanged = false;
     }
     const next = await hub.call<{ tool: string; step: string }>('agent.next').catch(() => undefined);
+    if (this.o.driven) {
+      const step = !next || next.tool === 'wait' ? 'nothing needs you right now. End your turn; you are woken when something arrives.' : next.step;
+      lines.push(`${STATUS_PREFIX} next: ${step}\n${DRIVEN_REMINDER}`);
+      return lines.join('\n');
+    }
     const human = this.handedHuman ? 'First do what the human asked above; it outranks the board. Then: ' : '';
     lines.push(`${STATUS_PREFIX} next: ${human}${next?.step ?? 'call wait.'}\n${LOOP_REMINDER}`);
     return lines.join('\n');

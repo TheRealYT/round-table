@@ -7,3 +7,4 @@ export * from './transport-contract.ts';
 export * from './test-hub.ts';
 export * from './mcp-agent.ts';
 export * from './git-fixture.ts';
+export * from './fake-driver.ts';
