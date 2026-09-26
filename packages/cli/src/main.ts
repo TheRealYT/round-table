@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // The `rt` command (architecture §2). Subcommands arrive slice by slice (docs/architecture/build-plan.md).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { demo } from './demo.ts';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { CLIENTS, clientProfile, createAgentWorktree, FileKeyStore, installAgent, rtHome, runAgentStdio } from '@round-table/agent';
 import { createHttpServer, Hub, loadOrCreateHubKey } from '@round-table/hub';
 import { WsConnector, WsListener } from '@round-table/protocol/ws';
+import { randomToken } from '@round-table/protocol/crypto';
 
 const DEFAULT_PORT = 7777;
 const APP_DIST = resolve(dirname(fileURLToPath(import.meta.url)), '../../app/dist');
@@ -14,6 +16,8 @@ const MAIN = fileURLToPath(import.meta.url);
 
 const COMMANDS: Record<string, { slice: string; usage: string; summary: string }> = {
   'hub start': { slice: 'S1', usage: '[--port 7777] [--data <dir>] [--app <dir>]', summary: 'Start the hub on 127.0.0.1 and print the one-time login URL.' },
+  'hub login': { slice: 'S1', usage: '', summary: 'Print a new one-time login link for the running hub.' },
+  demo: { slice: 'S1', usage: '[--dir <path>] [--client <id>] [--agents lead,ada,bo]', summary: 'Create a sample repo and one worktree per agent, installed for a client, and print what to do next.' },
   'agent run': { slice: 'S1', usage: '--slot <name> [--client <id>] [--hub <url>] [--wait-max-ms <n>] [--tools dynamic|static]', summary: 'Run rt-agent on stdio (what an agent\'s MCP client starts).' },
   'agent install': { slice: 'S1', usage: '--client <id> --slot <name> [--dir <path>] [--repo <path> [--main <branch>]] [--hub <url>]', summary: `Write <dir>'s MCP config for a client so it runs rt-agent. Clients: ${Object.keys(CLIENTS).join(', ')}.` },
   hook: { slice: 'S6', usage: 'pre-tool-use | post-tool-use', summary: 'Hook adapter entry point, called by the agent client.' },
@@ -29,6 +33,8 @@ interface HubPointer {
   url: string;
   httpUrl: string;
   hubId: string;
+  /** 0600 file with the secret `rt hub login` uses to ask the running hub for a new login link. */
+  adminSecretPath: string;
 }
 
 /** `rt hub start` writes where the hub listens, so `rt agent install` needs no flags. */
@@ -46,7 +52,11 @@ async function hubStart(args: string[]): Promise<void> {
   const port = Number(values.port ?? DEFAULT_PORT);
   const dataDir = resolve(values.data ?? join(rtHome(), 'hub'));
   const hub = new Hub({ storePath: join(dataDir, 'hub.db'), hubKey: loadOrCreateHubKey(dataDir) });
-  const http = createHttpServer(hub, { appDir: values.app ?? APP_DIST });
+  const adminSecret = randomToken();
+  const adminSecretPath = join(dataDir, 'admin-secret');
+  writeFileSync(adminSecretPath, adminSecret, { mode: 0o600 });
+  chmodSync(adminSecretPath, 0o600);
+  const http = createHttpServer(hub, { appDir: values.app ?? APP_DIST, adminSecret });
   hub.listen(WsListener.attach(http));
   await new Promise<void>((resolveListen, reject) => {
     http.once('error', reject);
@@ -54,11 +64,11 @@ async function hubStart(args: string[]): Promise<void> {
   });
   const httpUrl = `http://127.0.0.1:${port}`;
   mkdirSync(rtHome(), { recursive: true, mode: 0o700 });
-  writeFileSync(hubPointerPath(), JSON.stringify({ url: `ws://127.0.0.1:${port}`, httpUrl, hubId: hub.hubId } satisfies HubPointer, null, 2));
+  writeFileSync(hubPointerPath(), JSON.stringify({ url: `ws://127.0.0.1:${port}`, httpUrl, hubId: hub.hubId, adminSecretPath } satisfies HubPointer, null, 2));
   console.log(`Round Table hub ${hub.hubId}`);
   console.log(`  data:  ${dataDir}`);
   console.log(`  agents connect to ws://127.0.0.1:${port}/agent`);
-  console.log(`\nOpen the app (one-time link, valid 10 minutes):\n  ${httpUrl}/login?t=${hub.createLoginToken()}\n`);
+  console.log(`\nOpen the app (one-time link, valid 10 minutes; \`rt hub login\` prints a new one):\n  ${httpUrl}/login?t=${hub.createLoginToken()}\n`);
   const stop = () => {
     console.log('stopping hub');
     http.close();
@@ -67,6 +77,16 @@ async function hubStart(args: string[]): Promise<void> {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+}
+
+async function hubLogin(): Promise<void> {
+  const pointer = readHubPointer();
+  if (!pointer || !existsSync(pointer.adminSecretPath)) throw new Error('no running hub found; start one with `rt hub start`');
+  const secret = readFileSync(pointer.adminSecretPath, 'utf8').trim();
+  const res = await fetch(`${pointer.httpUrl}/admin/login-link`, { method: 'POST', headers: { authorization: `Bearer ${secret}` } }).catch(() => undefined);
+  if (!res?.ok) throw new Error(`the hub at ${pointer.httpUrl} did not answer; is it running?`);
+  const { path } = (await res.json()) as { path: string };
+  console.log(`Open the app (one-time link, valid 10 minutes):\n  ${pointer.httpUrl}${path}`);
 }
 
 async function agentRun(args: string[]): Promise<void> {
@@ -126,6 +146,12 @@ async function main(argv: string[]): Promise<number> {
   switch (name) {
     case 'hub start':
       await hubStart(args);
+      return 0;
+    case 'hub login':
+      await hubLogin();
+      return 0;
+    case 'demo':
+      demo(args);
       return 0;
     case 'agent run':
       await agentRun(args);
