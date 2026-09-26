@@ -34,3 +34,10 @@ Run it where the CLI is installed and logged in. It needs only Node and git: the
 Each CLI's recipe is in `check.mjs`. Only Claude Code's is verified: on 2026-09-26 it passed 6 of 6, stopping 0.3 s after SIGINT. The others come from each CLI's docs. Flags the CLI's `--help` doesn't list are left out, and the run says so. While a turn runs, the check prints the exact command, each tool call, the model's text, stderr, and a heartbeat every 10 s when the CLI is quiet. After 30 s of quiet it says what that usually means: a login, a trust question or an approval prompt the CLI can't show headless. The raw output also streams to `turnN.stdout.jsonl` (`tail -f`). Ctrl+C stops the run and still writes the report, including the last thing the CLI printed. Every run writes `cli-check-<cli>-<time>/` and a `.tar.gz` of it with the exact commands, raw output, `--help` and a `report.md`. That is what a driver is built from, whether the checks pass or fail.
 
 The interrupt check uses a slow tool call and not a shell `sleep`, because Claude Code ran `sleep 90` in the background and ended its turn at once.
+
+### Antigravity CLI: first run (agy 1.2.11, 2026-09-26)
+
+- `agy -p … --output-format stream-json --dangerously-skip-permissions` starts headless. Its first event is `{"event":"init","conversation_id":…,"init":{…,"permission_mode":"always-proceed"}}`, so the approval flag works. It has its own tool set, including `run_command`, `write_to_file` and `call_mcp_tool`.
+- Resume is `--conversation <id>` (or `--continue`), not `--resume`. `--input-format stream-json` exists, so a long-lived process fed messages on stdin may work as it does for Claude Code.
+- MCP servers are added with `agy mcp add`, not project config files. The check now registers the stand-in hub for the run and removes it at the end.
+- The run was stopped after 16 s, so checks 1–6 are still open. The check's summaries only knew events keyed `type`, so agy's `event`-keyed output showed nothing on screen. Fixed: unknown event kinds are shown the first time they appear.

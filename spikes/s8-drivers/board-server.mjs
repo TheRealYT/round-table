@@ -5,7 +5,8 @@
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
-const log = process.env.BOARD_LOG;
+// Where calls are recorded: $BOARD_LOG, or the first argument (for CLIs that can't pass env to MCP servers).
+const log = process.env.BOARD_LOG || process.argv[2];
 const send = (message) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
 const TOOLS = [
   {

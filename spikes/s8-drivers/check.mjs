@@ -61,18 +61,15 @@ const RECIPES = {
   },
   antigravity: {
     bin: 'agy',
+    // agy 1.2.11 (first check run, 2026-09-26): print mode with stream-json works, init reports
+    // conversation_id and permission_mode "always-proceed"; resume is --conversation <id>; MCP
+    // servers are registered with `agy mcp add` (a user-level setting, removed again at the end).
     verified: null,
-    // Where agy reads MCP servers from isn't documented for headless use: pass a flag if --help has
-    // one, and also write the usual config files into the folder (kept out of git).
-    files: (ctx) => ({ '.gemini/settings.json': mcpJson(ctx.server), 'mcp_config.json': mcpJson(ctx.server) }),
-    flags: (ctx) => [
-      '--output-format', 'stream-json',
-      ...pick(ctx, '--dangerously-skip-permissions', '--auto-approve', '--yolo'),
-      ...(ctx.has('--mcp-config') ? ['--mcp-config', join(ctx.work, 'mcp_config.json')] : []),
-    ],
+    mcp: { name: 'rt-check-board', add: (ctx, name) => [['mcp', 'add', name, '--', ctx.server.command, ...ctx.server.args, ctx.server.env.BOARD_LOG], ['mcp', 'add', name, ctx.server.command, ...ctx.server.args, ctx.server.env.BOARD_LOG]], remove: (name) => ['mcp', 'remove', name], list: ['mcp', 'list'], help: [['mcp', '--help'], ['mcp', 'add', '--help']] },
+    flags: (ctx) => ['--output-format', 'stream-json', ...pick(ctx, '--dangerously-skip-permissions')],
     first: (ctx) => [['-p', ctx.prompt, ...RECIPES.antigravity.flags(ctx)]],
     resume: (ctx) => [
-      ...(ctx.sessionId && ctx.has('--resume') ? [['-p', ctx.prompt, ...RECIPES.antigravity.flags(ctx), '--resume', ctx.sessionId]] : []),
+      ...(ctx.sessionId && ctx.has('--conversation') ? [['-p', ctx.prompt, ...RECIPES.antigravity.flags(ctx), '--conversation', ctx.sessionId]] : []),
       ...(ctx.has('--continue') ? [['-p', ctx.prompt, ...RECIPES.antigravity.flags(ctx), '--continue']] : []),
     ],
   },
@@ -165,6 +162,33 @@ note(`Round Table CLI check: ${kind} (${bin}, ${version.stdout.trim().split('\n'
 note(`sample repo ${work}; report ${out}`);
 note(recipe.verified ? `recipe verified: ${recipe.verified}` : 'recipe from the CLI’s docs, not verified yet: this run is the verification');
 
+// CLIs that register MCP servers with a subcommand (e.g. `agy mcp add`): add the stand-in hub for
+// this run, check it's listed, and remove it again when the check ends (also on Ctrl+C).
+let mcpCleanup = () => {};
+if (recipe.mcp) {
+  const m = recipe.mcp;
+  const lines = [];
+  const run = (args) => {
+    const r = spawnSync(bin, args, { env, encoding: 'utf8', timeout: 30_000 });
+    lines.push(`$ ${bin} ${args.join(' ')}\n(exit ${r.status})\n${r.stdout ?? ''}${r.stderr ?? ''}`);
+    return r;
+  };
+  for (const args of m.help) run(args);
+  run(m.remove(m.name)); // left over from an earlier, interrupted run
+  let added = false;
+  for (const args of m.add(ctxBase, m.name)) {
+    if (run(args).status === 0) {
+      added = true;
+      break;
+    }
+  }
+  const listed = added && (run(m.list).stdout ?? '').includes(m.name);
+  writeFileSync(join(out, 'mcp.txt'), lines.join('\n\n'));
+  note(added ? `registered the stand-in hub as MCP server "${m.name}"${listed ? '' : ' (but `mcp list` doesn’t show it)'}; it is removed again at the end` : 'could not register the stand-in hub with the CLI’s `mcp add`; see mcp.txt');
+  if (added) mcpCleanup = () => run(m.remove(m.name));
+}
+
+
 // ── running turns ────────────────────────────────────────────────────────────────────
 let turnNo = 0;
 const results = [];
@@ -214,6 +238,7 @@ function runOnce(args, { interruptWhen, interruptAfterMs, interruptAtMs } = {}) 
     let lastOutputAt = started;
     let lastSummary = '';
     let quietWarned = false;
+    const seenTypes = new Set();
     const at = () => `[${String(Math.round((Date.now() - started) / 1000)).padStart(3)}s]`;
     const show = (text) => {
       lastSeen = `${at()} ${text}`;
@@ -231,7 +256,12 @@ function runOnce(args, { interruptWhen, interruptAfterMs, interruptAtMs } = {}) 
         if (!l.trim()) continue;
         lines.push(l);
         const summary = summarize(l);
-        if (summary) show(summary);
+        if (summary?.startsWith('~')) {
+          if (!seenTypes.has(summary)) {
+            seenTypes.add(summary);
+            show(`event: ${summary.slice(1)}`);
+          }
+        } else if (summary) show(summary);
       }
     });
     child.stderr.on('data', (d) => {
@@ -317,7 +347,8 @@ function summarize(line) {
   } catch {
     return `output: ${clip(line, 160)}`;
   }
-  const type = [e.type, e.subtype ?? e.event?.type].filter(Boolean).join(':') || 'event';
+  const main = e.type ?? (typeof e.event === 'string' ? e.event : undefined) ?? e.kind ?? e.msg?.type;
+  const type = [main, e.subtype ?? (typeof e.event === 'object' ? e.event?.type : undefined)].filter(Boolean).join(':') || 'event';
   if (/delta|stream_event|partial/i.test(type)) return null;
   const tools = [];
   const texts = [];
@@ -334,7 +365,7 @@ function summarize(line) {
   if (texts.length) return `says: “${clip(texts.join(' '), 140)}”`;
   // Bare status events only when they mark a start, an end or an error; the heartbeat covers the rest.
   if (/init|start|result|complete|done|finish|error|fail/i.test(type)) return `${type}${e.is_error ? ' (error)' : ''}`;
-  return null;
+  return `~${type}`; // other events: shown the first time each kind appears
 }
 
 /** The CLI's session id, whatever it calls it. */
@@ -386,8 +417,8 @@ const check = (name, pass, detail) => {
 };
 
 note('\nturn 1: headless task with a file edit, a commit and a hub tool call …');
-const t1 = await turn(`You are testing a Round Table integration. Remember this codeword: ${CODE}. In the current folder, create notes.txt containing the line "one" and commit it with git. Then call the report tool (from the "board" MCP server) with the text "task 1 done". Then stop.`, true);
-check('1 headless', t1.code === 0 && t1.lines.length > 0, `exit ${t1.code}${t1.signal ? ` (${t1.signal})` : ''} in ${Math.round(t1.ms / 1000)} s, ${t1.lines.length} output lines, ${t1.events.length} of them JSON${t1.code !== 0 ? `; stderr: ${t1.stderr.trim().split('\n').slice(-2).join(' ')}` : ''}`);
+const t1 = await turn(`You are testing a Round Table integration. Remember this codeword: ${CODE}. In the current folder, create notes.txt containing the line "one" and commit it with git. Then call the report tool (an MCP tool from the Round Table hub) with the text "task 1 done". Then stop.`, true);
+check('1 headless', t1.code === 0 && t1.lines.length > 0, `exit ${t1.code}${t1.signal ? ` (${t1.signal})` : ''} in ${Math.round(t1.ms / 1000)} s, ${t1.lines.length} output lines, ${t1.events.length} of them JSON${t1.code !== 0 && t1.stderr.trim() ? `; stderr: ${t1.stderr.trim().split('\n').slice(-2).join(' ')}` : ''}`);
 check('2 no-prompts', commits() >= 1, commits() >= 1 ? `it committed on its own (${git('log', '-1', '--format=%s')})` : 'no commit: it may have asked for approval, or lacks a flag to skip it (see turn1 output)');
 check('3 mcp', reported('task 1 done'), reported('task 1 done') ? 'it called the hub’s report tool' : 'the report tool was never called: the CLI did not load the MCP server, or needs its config elsewhere (see help.txt for "mcp")');
 const cost = usage(t1.events);
@@ -402,7 +433,7 @@ check('4 resume', reported(`task 2 done, codeword ${CODE}`), reported(`task 2 do
 note('\nturn 3: a slow hub call, interrupted while the CLI waits for it …');
 // A slow MCP tool, not a shell sleep: models may push a sleep into the background, but they have to
 // wait for a tool call. The CLI is interrupted 15 s after the call starts (or at 60 s).
-const t3 = await turn('Message from the hub: call the fetch_plan tool (from the "board" MCP server) and wait for its answer, then call the report tool with "plan fetched". Then stop.', false, { interruptWhen: () => reported('fetch_plan started'), interruptAfterMs: 15_000, interruptAtMs: 60_000 });
+const t3 = await turn('Message from the hub: call the fetch_plan MCP tool and wait for its answer, then call the report tool with "plan fetched". Then stop.', false, { interruptWhen: () => reported('fetch_plan started'), interruptAfterMs: 15_000, interruptAtMs: 60_000 });
 note('turn 4: continue after the interrupt …');
 const t4 = await turn(`Message from the hub: the sleep was cancelled on purpose. Call the report tool with "after interrupt, codeword <the codeword>". Then stop.`, false);
 const survived = reported(`after interrupt, codeword ${CODE}`);
@@ -414,6 +445,8 @@ else check('5 interrupt', t3.interruptToExitMs !== null && t3.interruptToExitMs 
 finish(results.some((r) => r.pass === false) ? 1 : 0);
 
 function finish(exitCode) {
+  mcpCleanup();
+  mcpCleanup = () => {};
   writeFileSync(join(out, 'git-log.txt'), git('log', '--oneline'));
   const table = results.map((r) => `| ${r.name} | ${r.pass === true ? 'pass' : r.pass === false ? 'FAIL' : 'n/a'} | ${String(r.detail).replace(/\|/g, '\\|')} |`).join('\n');
   const report = [
