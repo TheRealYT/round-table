@@ -9,3 +9,6 @@ spikes/**/out/
 .DS_Store
 test-results/
 playwright-report/
+spikes/s8-drivers/node_modules
+spikes/s8-drivers/out.json
+spikes/s8-drivers/err.txt
