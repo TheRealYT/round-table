@@ -1,6 +1,6 @@
 # Build plan: vertical slices S0–S7
 
-**Status (2026-09-26):** S0 done ([findings](../../spikes/s0-mcp/FINDINGS.md)). S1 done: scenario, rt-agent and Playwright suites pass, and the manual check ran with real Claude Code ([`e2e/real-claude.ts`](../../e2e/real-claude.ts)): two sessions paired through the app, rejoined by key across restarts, and exchanged messages after a human instruction. Next: S2.
+**Status (2026-09-26):** S0, S1 and S2 done. S1: two real Claude Code sessions paired through the app and messaged each other ([`e2e/real-claude.ts`](../../e2e/real-claude.ts)). S2: a real leader and two real workers, each in its own worktree, delivered a change to the sample repo through the Round Table: proposal, leader commit, plan approval, claim, change request, review and test by another agent, and a hub merge gated on the hub's own test run ([`e2e/real-claude-s2.ts`](../../e2e/real-claude-s2.ts)). rt-agent works with any MCP client through client profiles ([ADR-0014](adr/0014-any-mcp-client.md)). Next: S3.
 
 This replaces the *order* of the spec's M0–M7 ([ADR-0013](adr/0013-vertical-slices.md)); the *scope* and the MVP definition of done are unchanged. Each slice ends with passing tests and something a person can run. The next slice doesn't start until the current one is green.
 

@@ -176,6 +176,8 @@ The hub moves every transition except `done` from facts it sees (claim, first co
 
 A new push to the branch changes `headSha` and invalidates steps 2–4 for the old sha, so a stale approval can't merge new code.
 
+**As built in S2.** The router reads the branch head from git before `board_propose('artifacts', …)`, `request` and `respond` reach core, so core sees `headSha` and `currentHeadSha` as plain facts. A verdict for an older head is rejected with `stale_head`, and a task in `in_test` goes back to `in_review`. `merge.requested` is emitted once per head. The merge reactor merges main + head in a scratch worktree, runs `rules.testCommand` there, and moves main with `git update-ref <new> <old>`, retrying if main moved. `merge.result` records the run in `quality` and marks the task done only if the done rule holds at the merged head. Agents work in their own worktrees (`rt agent install --repo`), detached at main, one branch per task.
+
 ### 4.4 Delivery (messages, notifications, `wait`)
 
 Each event may produce **delivery rows** `(projectId, agentId, sseq, priority, acked)`, computed in the append transaction from:
@@ -259,6 +261,7 @@ All operations, whether called by agents over MCP or by the human app, are **pro
 | `broadcast_critical`, `open_vote`, `summarize`, `dismiss` | leader | command | project | |
 | `history_search`, `history_get` | leader, human | query | system | durable read models only |
 | `project.create / archive / delete / pin` | human | command | system | |
+| `repo.attach` | human | command | system + project | the hub checks it is a git repo with the main branch, and warns if main is checked out |
 | `goal.set`, `rules.edit`, `access.grant / revoke`, `plan.approve / reject` | human | command | project | |
 | `inbox.answer`, `decision.override`, `criticality.lower` | human | command | project | |
 | `control.pause / resume / stop` | human | command | project or system | scope: agent, project or all |
