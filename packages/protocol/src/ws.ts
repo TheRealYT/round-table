@@ -1,5 +1,6 @@
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { decodeFrame, encodeFrame, PROTOCOL_VERSION, ProtocolError, type Frame } from './frame.ts';
 import {
   Handlers,
@@ -64,38 +65,51 @@ class WsTransport implements Transport {
 }
 
 const ENDPOINTS = { '/agent': 'agent', '/app': 'app' } as const;
+/** Transport-level heartbeat (ADR-0002): a peer that misses a pong is dropped, which starts the stale timer. */
+const PING_INTERVAL_MS = 15_000;
 
 export class WsListener implements TransportListener {
   private readonly connections = new Handlers<{ transport: Transport; info: ConnectionInfo }>();
-
   private readonly server: WebSocketServer;
+  private readonly alive = new WeakMap<WebSocket, boolean>();
+  private readonly heartbeat: ReturnType<typeof setInterval>;
 
   private constructor(server: WebSocketServer) {
     this.server = server;
-    server.on('connection', (socket: WebSocket, request: IncomingMessage) => {
-      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
-      const endpoint = ENDPOINTS[path as keyof typeof ENDPOINTS];
-      if (!endpoint) {
-        socket.close(1008, 'unknown endpoint');
-        return;
+    server.on('connection', (socket: WebSocket, request: IncomingMessage) => this.accept(socket, request));
+    this.heartbeat = setInterval(() => {
+      for (const client of this.server.clients) {
+        if (this.alive.get(client) === false) {
+          client.terminate();
+          continue;
+        }
+        this.alive.set(client, false);
+        client.ping();
       }
-      const info: ConnectionInfo = {
-        endpoint,
-        remoteAddress: request.socket.remoteAddress ?? 'unknown',
-        ...(request.headers.origin !== undefined && { origin: request.headers.origin }),
-        ...(request.headers.host !== undefined && { host: request.headers.host }),
-        ...(request.headers.cookie !== undefined && { cookie: request.headers.cookie }),
-      };
-      this.connections.emit({ transport: new WsTransport(socket), info });
-    });
+    }, PING_INTERVAL_MS);
+    this.heartbeat.unref?.();
   }
 
-  /** Binds to 127.0.0.1 only (spec: no network exposure). Port 0 picks a free port. */
+  /** Binds its own server to 127.0.0.1 only (spec: no network exposure). Port 0 picks a free port. */
   static async listen(port: number): Promise<WsListener> {
     const server = new WebSocketServer({ host: '127.0.0.1', port });
     await new Promise<void>((resolve, reject) => {
       server.once('listening', resolve);
       server.once('error', reject);
+    });
+    return new WsListener(server);
+  }
+
+  /** Shares an HTTP server (the hub serves the app and WebSockets on one port). */
+  static attach(httpServer: HttpServer): WsListener {
+    const server = new WebSocketServer({ noServer: true });
+    httpServer.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      if (!(path in ENDPOINTS)) {
+        socket.destroy();
+        return;
+      }
+      server.handleUpgrade(request, socket, head, (ws) => server.emit('connection', ws, request));
     });
     return new WsListener(server);
   }
@@ -111,8 +125,28 @@ export class WsListener implements TransportListener {
   }
 
   async close(): Promise<void> {
+    clearInterval(this.heartbeat);
     for (const client of this.server.clients) client.terminate();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  private accept(socket: WebSocket, request: IncomingMessage): void {
+    const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+    const endpoint = ENDPOINTS[path as keyof typeof ENDPOINTS];
+    if (!endpoint) {
+      socket.close(1008, 'unknown endpoint');
+      return;
+    }
+    this.alive.set(socket, true);
+    socket.on('pong', () => this.alive.set(socket, true));
+    const info: ConnectionInfo = {
+      endpoint,
+      remoteAddress: request.socket.remoteAddress ?? 'unknown',
+      ...(request.headers.origin !== undefined && { origin: request.headers.origin }),
+      ...(request.headers.host !== undefined && { host: request.headers.host }),
+      ...(request.headers.cookie !== undefined && { cookie: request.headers.cookie }),
+    };
+    this.connections.emit({ transport: new WsTransport(socket), info });
   }
 }
 

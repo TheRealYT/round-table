@@ -18,6 +18,7 @@ import type { Router } from './router.ts';
 import { agentOf, RpcError, type Session } from './session.ts';
 
 const HUB_PRINCIPAL: Principal = { kind: 'hub', component: 'gateway' };
+const LOCAL_HOST = /^(127\.0\.0\.1|localhost)(:\d+)?$/;
 
 /**
  * Turns connections into sessions (architecture §3): decides who each connection is, runs the
@@ -54,6 +55,13 @@ export class Gateway {
   private accept(transport: Transport, info: ConnectionInfo): void {
     let principal: Principal;
     if (info.endpoint === 'app') {
+      // DNS-rebinding and cross-site guard: the browser must be talking to 127.0.0.1/localhost,
+      // from a page served by this hub (architecture §7).
+      if ((info.host !== undefined && !LOCAL_HOST.test(info.host)) || (info.origin !== undefined && info.origin !== `http://${info.host}`)) {
+        sendError(transport, '-', 'forbidden', 'the app must be opened from http://127.0.0.1');
+        transport.close('forbidden');
+        return;
+      }
       const cookie = parseCookie(info.cookie ?? '')['rt_session'];
       if (!cookie || !this.isHumanSession(cookie)) {
         sendError(transport, '-', 'unauthenticated', 'log in with the URL printed by `rt hub start`');

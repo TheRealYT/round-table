@@ -5,3 +5,4 @@ export * from './sequential-ids.ts';
 export * from './seeded-random.ts';
 export * from './transport-contract.ts';
 export * from './test-hub.ts';
+export * from './mcp-agent.ts';

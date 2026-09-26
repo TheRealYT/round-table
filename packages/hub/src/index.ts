@@ -9,3 +9,5 @@ export * from './hub.ts';
 export * from './ids.ts';
 export * from './internals.ts';
 export { parseCookie } from './gateway.ts';
+export * from './http.ts';
+export * from './keyfile.ts';

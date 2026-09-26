@@ -10,6 +10,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "@round-table/agent": "workspace:*",
     "@round-table/core": "workspace:*",
     "@round-table/hub": "workspace:*",
