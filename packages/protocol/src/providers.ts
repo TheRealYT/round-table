@@ -20,6 +20,8 @@ export interface ProviderKindDef {
   driverVerified: boolean;
   /** Model names to offer; any string is accepted. */
   models: readonly string[];
+  /** Environment variables people commonly set for this CLI (endpoints, proxies); offered, not enforced. */
+  envHints: readonly string[];
 }
 
 export const PROVIDER_KINDS = [
@@ -32,6 +34,7 @@ export const PROVIDER_KINDS = [
     install: 'npm i -g @anthropic-ai/claude-code',
     driverVerified: true,
     models: ['sonnet', 'opus', 'haiku'],
+    envHints: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'HTTPS_PROXY', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'DISABLE_TELEMETRY'],
   },
   {
     kind: 'codex',
@@ -42,16 +45,19 @@ export const PROVIDER_KINDS = [
     install: 'npm i -g @openai/codex',
     driverVerified: false,
     models: [],
+    envHints: ['OPENAI_BASE_URL', 'HTTPS_PROXY'],
   },
   {
-    kind: 'gemini',
-    label: 'Gemini CLI',
-    binary: 'gemini',
+    // Google's CLI for individual users since the Gemini CLI was discontinued for them (June 2026).
+    kind: 'antigravity',
+    label: 'Antigravity CLI',
+    binary: 'agy',
     apiKeyEnv: 'GEMINI_API_KEY',
-    login: 'Run `gemini` once on the hub machine and sign in with Google.',
-    install: 'npm i -g @google/gemini-cli',
+    login: 'Run `agy` once on the hub machine and sign in. (An API key also needs `"modelProvider": "gemini"` in `~/.gemini/antigravity-cli/settings.json`.)',
+    install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     driverVerified: false,
     models: [],
+    envHints: ['HTTPS_PROXY'],
   },
   {
     kind: 'cursor',
@@ -62,6 +68,7 @@ export const PROVIDER_KINDS = [
     install: 'curl https://cursor.com/install -fsS | bash',
     driverVerified: false,
     models: [],
+    envHints: ['HTTPS_PROXY'],
   },
   {
     kind: 'opencode',
@@ -72,6 +79,7 @@ export const PROVIDER_KINDS = [
     install: 'npm i -g opencode-ai',
     driverVerified: false,
     models: [],
+    envHints: ['OPENAI_BASE_URL', 'HTTPS_PROXY'],
   },
 ] as const satisfies readonly ProviderKindDef[];
 
@@ -86,6 +94,9 @@ export function providerKind(kind: string): ProviderKindDef | undefined {
 export const ProviderAuth = z.enum(['cli-login', 'api-key']);
 export type ProviderAuth = z.infer<typeof ProviderAuth>;
 
+/** An environment variable name, as shells accept it. */
+export const EnvName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,99}$/, 'use letters, digits and _, not starting with a digit');
+
 /** What the human sets for a provider. Secrets are never part of it (see `provider.secret`). */
 export const ProviderSettings = z.object({
   kind: ProviderKind,
@@ -96,6 +107,14 @@ export const ProviderSettings = z.object({
   model: z.string().max(100).default(''),
   extraArgs: z.array(z.string().max(200)).max(20).default([]),
   maxInstances: z.number().int().min(1).max(20).default(3),
+  /** Extra environment for every agent from this provider, e.g. an API endpoint or a proxy. Stored in the log. */
+  env: z.array(z.object({ name: EnvName, value: z.string().max(4000) })).max(30).default([]),
+  /** Names of secret variables (tokens): their values go through `provider.secret`, never the log. */
+  secretEnv: z.array(EnvName).max(30).default([]),
+}).superRefine((s, ctx) => {
+  const names = [...s.env.map((e) => e.name), ...s.secretEnv];
+  const dup = names.find((n, i) => names.indexOf(n) !== i);
+  if (dup) ctx.addIssue({ code: 'custom', message: `${dup} is set twice`, path: ['env'] });
 });
 export type ProviderSettings = z.infer<typeof ProviderSettings>;
 

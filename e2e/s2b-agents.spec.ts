@@ -20,10 +20,22 @@ test('the human sets up a provider, starts two agents from it and watches them a
   await page.getByRole('button', { name: /Claude Code/ }).click();
   await page.getByLabel('Model').fill('sonnet');
   await page.getByLabel('Agents at once').fill('2');
+  // A custom endpoint, and a token kept secret.
+  await page.getByRole('button', { name: 'Add variable' }).click();
+  await page.getByLabel('Variable name').first().fill('ANTHROPIC_BASE_URL');
+  await page.getByLabel('Value of ANTHROPIC_BASE_URL').fill('https://llm.internal.example/v1');
+  await page.getByRole('button', { name: 'Add variable' }).click();
+  await page.getByLabel('Variable name').nth(1).fill('ANTHROPIC_AUTH_TOKEN');
+  await page.getByLabel('secret').nth(1).check();
+  await expect(page.getByText('Enter a value for ANTHROPIC_AUTH_TOKEN.')).toBeVisible();
+  await page.getByLabel('Value of ANTHROPIC_AUTH_TOKEN').fill('tok-123');
+  await page.screenshot({ path: 'test-results/s2b-provider-form.png', fullPage: true });
   await page.getByRole('button', { name: 'Add Claude Code' }).click();
 
   const card = page.locator('article.provider', { hasText: 'Claude Code' });
   await expect(card.getByText('fake 1.0')).toBeVisible();
+  await expect(card.getByText('https://llm.internal.example/v1')).toBeVisible();
+  await expect(card.getByText('•••••• (secret)')).toBeVisible();
   await card.getByRole('button', { name: 'Test sign-in' }).click();
   await expect(card.getByRole('status')).toContainText('Signed in and answering');
 
@@ -32,6 +44,7 @@ test('the human sets up a provider, starts two agents from it and watches them a
   await expect(card.getByText('Started Ada, Bo')).toBeVisible();
   await expect.poll(() => driver.started.length).toBe(2);
   expect(driver.started[0]!.options.model).toBe('sonnet');
+  expect(driver.started[0]!.options.env).toEqual({ ANTHROPIC_BASE_URL: 'https://llm.internal.example/v1', ANTHROPIC_AUTH_TOKEN: 'tok-123' });
   await expect(card.locator('tbody tr')).toHaveCount(2);
 
   // A third would exceed the limit of 2.

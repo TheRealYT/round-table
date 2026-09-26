@@ -6,7 +6,7 @@ This is a guide to testing the current build by hand: what you need, three ways 
 
 - Node.js 24 LTS (26 also works) and pnpm 10
 - git
-- A coding CLI for the agents, installed and logged in **on the machine the hub runs on** (ideally a sandbox, since agents run without approval prompts). Claude Code can be run by the hub today. Codex, Gemini CLI, Cursor CLI and opencode can be set up in the app, but the hub starts them only once their driver passes the same check ([ADR-0018](architecture/adr/0018-round-table-runs-the-agents.md)).
+- A coding CLI for the agents, installed and logged in **on the machine the hub runs on** (ideally a sandbox, since agents run without approval prompts). Claude Code can be run by the hub today. Codex, Antigravity CLI (`agy`), Cursor CLI and opencode can be set up in the app, but the hub starts them only once their driver passes the same check ([ADR-0018](architecture/adr/0018-round-table-runs-the-agents.md)).
 - A browser on the same machine. The hub only listens on 127.0.0.1.
 
 ```sh
@@ -24,7 +24,7 @@ No chat windows. You set up the CLI once, and the hub starts, wakes and stops th
 rt hub start          # keep it running; open the login link it prints
 ```
 
-1. **Agents** page (the app opens on it): **Add a provider** → **Claude Code**. Pick the sign-in: *the CLI's own login* (run `claude` once on this machine and log in) or an *API key* (kept by the hub in a private file, never in its log). Optionally set the model and how many agents may run at once. **Test sign-in** runs one tiny prompt to check it.
+1. **Agents** page (the app opens on it): **Add a provider** → **Claude Code**. Pick the sign-in: *the CLI's own login* (run `claude` once on this machine and log in) or an *API key* (kept by the hub in a private file, never in its log). Optionally set the model, how many agents may run at once, and **environment variables** for every agent from it, e.g. `ANTHROPIC_BASE_URL` for another endpoint or `HTTPS_PROXY`. Tick *secret* for tokens (e.g. `ANTHROPIC_AUTH_TOKEN`): like the API key, their values stay out of the log and can't be read back. **Test sign-in** runs one tiny prompt to check it.
 2. Add a project in the sidebar and fill in **Set up the project**: the goal, a repository path, and the test command (for a quick try, make a sample repo with `rt demo --dir ~/rt-demo` and use `~/rt-demo/repo` and `sh test.sh`).
 3. Back on **Agents**, in the provider's card: choose the project, type names (e.g. `Lead, Ada, Bo`) and click **Start 3 agents**. Each gets its own git worktree under the hub's data folder.
 4. Open the project. **The table** shows each agent's seat, ringed by its status (working, idle, stopped, crashed). Select a seat for its live transcript, turns, cost and tokens, and **Interrupt**, **Stop** or **Start** buttons. Click **Make leader** on Lead.
@@ -119,10 +119,10 @@ That installs an agent you run yourself (path B). With path A you only attach th
 | Tasks | Plan approval by the human, claim and release (workers only), one branch per task | |
 | Change requests | Open, refresh after new commits, review and test requests, verdicts tied to the exact commit | Nobody reviews their own work; the leader never reviews. |
 | Merge gate | The hub merges main + the change in a scratch worktree, runs the test command, and moves main by compare-and-swap | A failing run or a conflict leaves main untouched and sends the task back to the author. |
-| Hub-run agents | Providers per CLI (binary, sign-in, API key, model, limit), install check and test run, starting several agents from one provider, worktree per agent, messages and board work delivered as turns, exact status, cost and tokens per turn, interrupt, stop and start, restart after a crash by resuming the conversation, and again after a hub restart | Claude Code only for now. |
+| Hub-run agents | Providers per CLI (binary, sign-in, API key, model, limit, custom and secret environment variables), install check and test run, starting several agents from one provider, worktree per agent, messages and board work delivered as turns, exact status, cost and tokens per turn, interrupt, stop and start, restart after a crash by resuming the conversation, and again after a hub restart | Claude Code only for now. |
 | Agent loop (chat agents) | Every tool result carries the next step from the board; agents keep working through tools until told to stop; each agent card shows what its chat is doing (working, waiting for messages, stopped) | No role prompts needed. |
 | App | Agents (providers and running agents), the round table with transcripts and controls, Pairing, projects, Setup, task board, change requests, feed, composer; dark and light | Updates live. |
-| Clients | Claude Code (verified in real sessions); Codex, Gemini CLI, opencode (config verified); Cursor, VS Code (from their docs) | `rt agent install --client …` |
+| Clients (joining from a chat) | Claude Code (verified in real sessions); Codex, Gemini CLI, opencode (config verified); Cursor, VS Code (from their docs). The Gemini CLI profile is only for accounts that still have it (Google moved individual users to the Antigravity CLI in June 2026). | `rt agent install --client …` |
 | Durability | Hub restart keeps everything; agents reconnect and resume; merges that were interrupted resume | |
 
 ## What doesn't work yet
@@ -138,7 +138,7 @@ That installs an agent you run yourself (path B). With path A you only attach th
 | Home, Inbox, Logs with time travel, Metrics, History, Settings in the app | S5 | |
 | Git watcher (commits logged without agents reporting), BOARD.md export, retro, retention, hook adapter | S6 | |
 | App login surviving a hub restart | later | `rt hub login` |
-| The hub running Codex, Gemini CLI, Cursor CLI or opencode | after each passes the S8 driver check | Set them up now; join them from a chat (path B) meanwhile. |
+| The hub running Codex, Antigravity CLI, Cursor CLI or opencode | after each passes the S8 driver check | Set them up now; join them from a chat (path B) meanwhile. |
 
 ## How the agent loop works
 

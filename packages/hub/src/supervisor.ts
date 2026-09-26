@@ -1,4 +1,4 @@
-import { nextStep, type Model } from '@round-table/core';
+import { nextStep, type Model, type ProviderRecord } from '@round-table/core';
 import { providerKind, type AgentId, type EventRow, type MessageEnvelope, type Principal, type ProjectId, type RunStatus } from '@round-table/protocol';
 import type { KeyPair } from '@round-table/protocol/crypto';
 import type { Bus } from './command-bus.ts';
@@ -21,6 +21,32 @@ export interface AgentHost {
   provision(agent: { agentId: string; name: string; hubId: string; hubPublicKey: string; key: KeyPair }): Promise<void>;
   /** Before each start: the folder it works in and its MCP server. */
   prepare(agent: { agentId: string; name: string; repo: { path: string; mainBranch: string } | null }): Promise<{ cwd: string; mcp: McpServerSpec }>;
+}
+
+/** Where a provider credential lives in the secret store: the API key, or a secret env var. */
+export function secretKey(providerId: string, name: string | null): string {
+  return name ? `${providerId}:${name}` : providerId;
+}
+
+/**
+ * The environment an agent from this provider gets: the provider's variables, its secret ones,
+ * then the API key (which wins, since the human chose that sign-in). Throws when a value is missing.
+ */
+export function providerEnv(provider: ProviderRecord, secrets: SecretStore): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const { name, value } of provider.settings.env ?? []) env[name] = value;
+  for (const name of provider.settings.secretEnv ?? []) {
+    const value = secrets.get(secretKey(provider.providerId, name));
+    if (value === undefined) throw new Error(`no value is set for the secret variable ${name}`);
+    env[name] = value;
+  }
+  if (provider.settings.auth === 'api-key') {
+    const kind = providerKind(provider.settings.kind);
+    const key = secrets.get(secretKey(provider.providerId, null));
+    if (!key || !kind) throw new Error(`no API key is set for ${provider.settings.label}`);
+    env[kind.apiKeyEnv] = key;
+  }
+  return env;
 }
 
 export interface TranscriptEntry {
@@ -179,12 +205,7 @@ export class Supervisor {
       const kind = providerKind(provider.settings.kind);
       const driver = this.o.drivers[provider.settings.kind];
       if (!driver || !kind?.driverVerified) throw new Error(`Round Table can’t run ${kind?.label ?? provider.settings.kind} yet`);
-      const env: Record<string, string> = {};
-      if (provider.settings.auth === 'api-key') {
-        const secret = this.o.secrets.get(provider.providerId);
-        if (!secret) throw new Error(`no API key is set for ${provider.settings.label}`);
-        env[kind.apiKeyEnv] = secret;
-      }
+      const env = providerEnv(provider, this.o.secrets);
       const project = this.o.model.projects[agent.projectId];
       const repo = project?.repoId ? this.o.model.repos[project.repoId] : undefined;
       const workspace = await this.o.host.prepare({ agentId, name: agent.name, repo: repo ? { path: repo.path, mainBranch: repo.mainBranch } : null });

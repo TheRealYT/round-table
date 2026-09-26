@@ -74,10 +74,15 @@ function AddProvider({ kinds, onDone, canCancel }: { kinds: ProviderKindDef[]; o
 
 function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKindDef; provider?: ProviderRecord; onSaved: () => void; onCancel: () => void }) {
   const id = useId();
-  const initial: ProviderSettings = provider?.settings ?? { kind: kind.kind, label: kind.label, command: '', auth: 'cli-login', model: '', extraArgs: [], maxInstances: 3 };
+  const initial: ProviderSettings = { kind: kind.kind, label: kind.label, command: '', auth: 'cli-login', model: '', extraArgs: [], maxInstances: 3, env: [], secretEnv: [], ...provider?.settings };
   const [s, setS] = useState(initial);
   const [args, setArgs] = useState(initial.extraArgs.join(' '));
   const [key, setKey] = useState('');
+  const [vars, setVars] = useState<EnvRow[]>(() => [
+    ...(initial.env ?? []).map((e) => ({ name: e.name, value: e.value, secret: false, stored: false })),
+    ...(initial.secretEnv ?? []).map((name) => ({ name, value: '', secret: true, stored: provider?.secretsSet.includes(name) ?? false })),
+  ]);
+  const varError = envError(vars);
   const [save, saving, saveError] = useCommand<{ providerId: string }>('provider.save');
   const [setSecret, settingSecret, secretError] = useCommand('provider.secret');
   const needsKey = s.auth === 'api-key' && !provider?.hasSecret && key.trim() === '';
@@ -87,8 +92,15 @@ function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKin
       className="stack"
       onSubmit={async (e) => {
         e.preventDefault();
-        const out = await save({ ...(provider && { providerId: provider.providerId }), settings: { ...s, label: s.label.trim() || kind.label, extraArgs: args.split(/\s+/).filter(Boolean) } });
+        if (varError) return;
+        const rows = vars.filter((v) => v.name.trim());
+        const env = rows.filter((v) => !v.secret).map((v) => ({ name: v.name.trim(), value: v.value }));
+        const secretEnv = rows.filter((v) => v.secret).map((v) => v.name.trim());
+        const out = await save({ ...(provider && { providerId: provider.providerId }), settings: { ...s, label: s.label.trim() || kind.label, extraArgs: args.split(/\s+/).filter(Boolean), env, secretEnv } });
         if (!out) return;
+        for (const v of rows.filter((r) => r.secret && r.value.trim())) {
+          if (!(await setSecret({ providerId: out.providerId, name: v.name.trim(), value: v.value.trim() }))) return;
+        }
         if (s.auth === 'api-key' && key.trim()) {
           const ok = await setSecret({ providerId: out.providerId, value: key.trim() });
           if (!ok) return;
@@ -130,6 +142,7 @@ function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKin
           <input id={`${id}-key`} type="password" autoComplete="off" spellCheck={false} className="mono" value={key} onChange={(e) => setKey(e.target.value)} placeholder={provider?.hasSecret ? '••••••••••••' : 'Paste the key'} />
         </div>
       )}
+      <EnvEditor kind={kind} rows={vars} onChange={setVars} error={varError} />
       <details>
         <summary className="muted small">Advanced</summary>
         <div className="field" style={{ marginTop: 'var(--space-3)' }}>
@@ -141,10 +154,64 @@ function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKin
       {(saveError || secretError) && <p className="error">{saveError ?? secretError}</p>}
       {needsKey && <p className="hint">Add the key now, or later from the provider card; agents can’t start without it.</p>}
       <div className="form-actions">
-        <button className="primary" type="submit" disabled={saving || settingSecret}>{provider ? 'Save changes' : `Add ${kind.label}`}</button>
+        <button className="primary" type="submit" disabled={saving || settingSecret || Boolean(varError)}>{provider ? 'Save changes' : `Add ${kind.label}`}</button>
         <button type="button" className="ghost" onClick={onCancel}>{provider ? 'Cancel' : 'Back'}</button>
       </div>
     </form>
+  );
+}
+
+interface EnvRow { name: string; value: string; secret: boolean; stored: boolean }
+
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,99}$/;
+
+function envError(rows: EnvRow[]): string | undefined {
+  const named = rows.filter((r) => r.name.trim());
+  const bad = named.find((r) => !ENV_NAME.test(r.name.trim()));
+  if (bad) return `${bad.name.trim()} isn’t a valid variable name: use letters, digits and _, not starting with a digit.`;
+  const names = named.map((r) => r.name.trim());
+  const dup = names.find((n, i) => names.indexOf(n) !== i);
+  if (dup) return `${dup} is set twice.`;
+  const empty = named.find((r) => r.secret && !r.stored && !r.value.trim());
+  if (empty) return `Enter a value for ${empty.name.trim()}.`;
+  return undefined;
+}
+
+/** Custom environment for every agent from this provider: API endpoints, proxies, CLI switches. */
+function EnvEditor({ kind, rows, onChange, error }: { kind: ProviderKindDef; rows: EnvRow[]; onChange: (rows: EnvRow[]) => void; error: string | undefined }) {
+  const id = useId();
+  const set = (i: number, patch: Partial<EnvRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <fieldset className="field env" style={{ border: 'none', padding: 0, margin: 0 }}>
+      <legend className="label">Environment variables</legend>
+      <span className="hint">Passed to every agent from this provider, e.g. an API endpoint or a proxy. Mark tokens as secret: their values are kept like the API key, never in the log.</span>
+      {rows.length > 0 && (
+        <div className="env-rows">
+          {rows.map((r, i) => (
+            <div className="env-row" key={i}>
+              <label className="sr-only" htmlFor={`${id}-n${i}`}>Variable name</label>
+              <input id={`${id}-n${i}`} className="mono" list={`${id}-hints`} value={r.name} placeholder="NAME" spellCheck={false} onChange={(e) => set(i, { name: e.target.value })} />
+              <label className="sr-only" htmlFor={`${id}-v${i}`}>Value of {r.name || 'the variable'}</label>
+              <input
+                id={`${id}-v${i}`}
+                className="mono"
+                type={r.secret ? 'password' : 'text'}
+                autoComplete="off"
+                spellCheck={false}
+                value={r.value}
+                placeholder={r.secret ? (r.stored ? '•••••• set; type to replace' : 'secret value') : 'value'}
+                onChange={(e) => set(i, { value: e.target.value })}
+              />
+              <label className="env-secret"><input type="checkbox" checked={r.secret} onChange={(e) => set(i, { secret: e.target.checked, value: e.target.checked ? r.value : r.stored ? '' : r.value, stored: e.target.checked && r.stored })} /> secret</label>
+              <button type="button" className="ghost small" aria-label={`Remove ${r.name || 'variable'}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}>Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <datalist id={`${id}-hints`}>{kind.envHints.map((h) => <option key={h} value={h} />)}</datalist>
+      {error && <p className="error">{error}</p>}
+      <div><button type="button" className="small" onClick={() => onChange([...rows, { name: '', value: '', secret: false, stored: false }])}>Add variable</button></div>
+    </fieldset>
   );
 }
 
@@ -180,7 +247,8 @@ function ProviderCard({ provider, kind, projects, canRun, onOpenProject }: { pro
   const [remove, removing, removeError] = useCommand('provider.remove');
   const [secret, , secretError] = useCommand('provider.secret');
   if (!kind) return null;
-  const needsKey = s.auth === 'api-key' && !provider.hasSecret;
+  const unsetVars = (s.secretEnv ?? []).filter((n) => !provider.secretsSet.includes(n));
+  const needsKey = (s.auth === 'api-key' && !provider.hasSecret) || unsetVars.length > 0;
   const ready = kind.driverVerified && canRun && !needsKey && detect.data?.found !== false;
 
   const runTest = async () => {
@@ -229,6 +297,19 @@ function ProviderCard({ provider, kind, projects, canRun, onOpenProject }: { pro
             <dt>Model</dt>
             <dd>{s.model || <span className="muted">CLI default</span>}</dd>
             {s.extraArgs.length > 0 && (<><dt>Arguments</dt><dd className="mono small">{s.extraArgs.join(' ')}</dd></>)}
+            {((s.env ?? []).length > 0 || (s.secretEnv ?? []).length > 0) && (
+              <>
+                <dt>Environment</dt>
+                <dd className="env-list">
+                  {(s.env ?? []).map((e) => <div key={e.name} className="mono small"><span>{e.name}</span>=<span className="muted">{e.value}</span></div>)}
+                  {(s.secretEnv ?? []).map((n) => (
+                    <div key={n} className="mono small">
+                      <span>{n}</span>={provider.secretsSet.includes(n) ? <span className="muted">•••••• (secret)</span> : <span className="verdict bad">not set</span>}
+                    </div>
+                  ))}
+                </dd>
+              </>
+            )}
           </dl>
           <dl className="kv">
             <dt>Sign-in</dt>
@@ -251,7 +332,7 @@ function ProviderCard({ provider, kind, projects, canRun, onOpenProject }: { pro
       <div className="provider-foot">
         {!kind.driverVerified ? (
           <p className="small muted">Round Table doesn’t drive {kind.label} yet: it needs the same check Claude Code passed (<code>spikes/s8-drivers</code>). Your settings are kept, and starting agents unlocks once the check passes.</p>
-        ) : <SpawnForm provider={provider} projects={projects} ready={ready} reason={!kind.driverVerified ? `Round Table can’t run ${kind.label} yet: its driver hasn’t passed the check.` : !canRun ? 'This hub can’t run agents.' : needsKey ? 'Add the API key first.' : detect.data?.found === false ? `${kind.binary} isn’t installed on the hub machine.` : undefined} />}
+        ) : <SpawnForm provider={provider} projects={projects} ready={ready} reason={!kind.driverVerified ? `Round Table can’t run ${kind.label} yet: its driver hasn’t passed the check.` : !canRun ? 'This hub can’t run agents.' : needsKey ? (unsetVars.length > 0 ? `Set a value for ${unsetVars.join(', ')} first (Edit).` : 'Add the API key first.') : detect.data?.found === false ? `${kind.binary} isn’t installed on the hub machine.` : undefined} />}
         {provider.agents.length > 0 && <ProviderAgents provider={provider} projects={projects} onOpenProject={onOpenProject} />}
       </div>
     </article>

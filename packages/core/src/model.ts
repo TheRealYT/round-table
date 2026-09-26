@@ -22,6 +22,8 @@ export interface ProviderRecord {
   settings: ProviderSettings;
   /** The hub holds a credential for it (the value lives outside the log). */
   hasSecret: boolean;
+  /** Secret environment variables that have a value (names only). */
+  secretsSet: string[];
   createdAt: number;
   removed: boolean;
 }

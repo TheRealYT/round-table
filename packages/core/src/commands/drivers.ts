@@ -28,9 +28,11 @@ export const removeProvider: CommandHandler<{ providerId: ProviderId }> = (model
 };
 
 /** Internal: the hub stored or cleared a credential. */
-export const markProviderSecret: CommandHandler<{ providerId: ProviderId; set: boolean }> = (model, command, ctx) => {
+export const markProviderSecret: CommandHandler<{ providerId: ProviderId; set: boolean; name: string | null }> = (model, command, ctx) => {
   const provider = model.providers[command.input.providerId];
   if (!provider || provider.removed) return reject('unknown_provider', 'no such provider');
+  const { name } = command.input;
+  if (name !== null && !(provider.settings.secretEnv ?? []).includes(name)) return reject('invalid_input', `${name} isn’t one of this provider’s secret variables`);
   return accept([makeEvent(ctx, HUB, SYSTEM, 'provider.secret_changed', command.input)]);
 };
 
@@ -51,7 +53,8 @@ export const spawnAgent: CommandHandler<{
   if (!kind?.driverVerified) {
     return reject('driver_unverified', `${kind?.label ?? provider.settings.kind} can be configured, but Round Table can’t run it yet: its driver hasn’t passed the check`);
   }
-  if (provider.settings.auth === 'api-key' && !provider.hasSecret) return reject('no_credential', 'this provider signs in with an API key, and none is set');
+  const missing = missingCredentials(provider);
+  if (missing) return reject('no_credential', missing);
   const running = runningFrom(model, providerId);
   if (running >= provider.settings.maxInstances) {
     return reject('instance_limit', `${provider.settings.label} already runs ${running} of ${provider.settings.maxInstances} agents; stop one or raise the limit`);
@@ -80,6 +83,8 @@ export const setAgentRun: CommandHandler<{ projectId: ProjectId; agentId: AgentI
     if (!provider || provider.removed) return reject('unknown_provider', 'its provider was removed');
     const running = runningFrom(model, provider.providerId);
     if (running >= provider.settings.maxInstances) return reject('instance_limit', `${provider.settings.label} already runs ${running} of ${provider.settings.maxInstances} agents`);
+    const missing = missingCredentials(provider);
+    if (missing) return reject('no_credential', missing);
   }
   return accept([makeEvent(ctx, authorOf(command.principal), SYSTEM, 'agent.run_requested', { agentId: agent.agentId, run: command.input.run })]);
 };
@@ -98,6 +103,14 @@ export const recordTurn: CommandHandler<{ agentId: AgentId; ok: boolean; duratio
   if (!agent?.driven) return reject('unknown_agent', 'not a hub-run agent');
   return accept([makeEvent(ctx, HUB, inProject(agent.projectId), 'agent.turn_finished', command.input)]);
 };
+
+/** Why the provider can't start agents for lack of a stored value, if so. */
+function missingCredentials(provider: Model['providers'][ProviderId]): string | undefined {
+  if (provider.settings.auth === 'api-key' && !provider.hasSecret) return 'this provider signs in with an API key, and none is set';
+  const unset = (provider.settings.secretEnv ?? []).filter((n) => !provider.secretsSet.includes(n));
+  if (unset.length > 0) return `set a value for the secret variable${unset.length === 1 ? '' : 's'} ${unset.join(', ')}`;
+  return undefined;
+}
 
 function runningFrom(model: Readonly<Model>, providerId: ProviderId): number {
   return Object.values(model.agents).filter((a) => a.driven?.providerId === providerId && a.driven.run && !a.revoked).length;

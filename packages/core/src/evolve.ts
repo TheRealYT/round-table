@@ -85,8 +85,13 @@ const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
   },
   'provider.saved': (m, p, e) => {
     const existing = m.providers[p.providerId];
-    if (existing) existing.settings = p.settings;
-    else m.providers[p.providerId] = { providerId: p.providerId, settings: p.settings, hasSecret: false, createdAt: e.ts, removed: false };
+    if (existing) {
+      existing.settings = p.settings;
+      // A variable no longer marked secret loses its stored value (the hub deletes it too).
+      existing.secretsSet = existing.secretsSet.filter((n) => (p.settings.secretEnv ?? []).includes(n));
+    } else {
+      m.providers[p.providerId] = { providerId: p.providerId, settings: p.settings, hasSecret: false, secretsSet: [], createdAt: e.ts, removed: false };
+    }
   },
   'provider.removed': (m, p) => {
     const r = m.providers[p.providerId];
@@ -94,7 +99,9 @@ const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
   },
   'provider.secret_changed': (m, p) => {
     const r = m.providers[p.providerId];
-    if (r) r.hasSecret = p.set;
+    if (!r) return;
+    if (!p.name) r.hasSecret = p.set;
+    else r.secretsSet = p.set ? [...new Set([...r.secretsSet, p.name])] : r.secretsSet.filter((n) => n !== p.name);
   },
   'agent.provisioned': (m, p, e) => {
     m.agents[p.agentId] = {

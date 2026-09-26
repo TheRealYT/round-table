@@ -35,10 +35,35 @@ describe('providers (ADR-0018)', () => {
     const list = await t.human.call<{ providers: Array<{ providerId: string; hasSecret: boolean; settings: { auth: string } }> }>('provider.list');
     expect(list.providers).toEqual([expect.objectContaining({ providerId, hasSecret: true, settings: expect.objectContaining({ auth: 'api-key' }) })]);
     expect(secrets.get(providerId)).toBe('sk-very-secret-123');
-    expect(JSON.stringify(t.hub.store.all())).not.toContain('sk-very-secret');
+    expect(JSON.stringify([...t.hub.store.all()])).not.toContain('sk-very-secret');
     expect(JSON.stringify(list)).not.toContain('sk-very-secret');
     await t.human.call('provider.secret', { providerId, value: null });
     expect(secrets.get(providerId)).toBeUndefined();
+  });
+
+  it('passes custom environment variables to the agents; secret ones stay out of the log', async () => {
+    const secrets = new MemorySecretStore();
+    const { driver, projectId, providerId } = await setup({ secrets });
+    const settings = { ...CLAUDE, env: [{ name: 'ANTHROPIC_BASE_URL', value: 'https://llm.internal.example/v1' }], secretEnv: ['ANTHROPIC_AUTH_TOKEN'] };
+    await t.human.call('provider.save', { providerId, settings });
+    expect((await spawn(projectId, providerId, ['Ada'])).failed[0]!.error).toContain('ANTHROPIC_AUTH_TOKEN');
+
+    await t.human.call('provider.secret', { providerId, name: 'ANTHROPIC_AUTH_TOKEN', value: 'tok-very-secret-9' });
+    await expect(t.human.call('provider.secret', { providerId, name: 'OTHER', value: 'x' })).rejects.toThrow('isn’t one of this provider’s secret variables');
+    const list = await t.human.call<{ providers: Array<{ secretsSet: string[] }> }>('provider.list');
+    expect(list.providers[0]!.secretsSet).toEqual(['ANTHROPIC_AUTH_TOKEN']);
+
+    expect((await spawn(projectId, providerId, ['Ada'])).started).toHaveLength(1);
+    await expect.poll(() => driver.started.length).toBe(1);
+    expect(driver.started[0]!.options.env).toEqual({ ANTHROPIC_BASE_URL: 'https://llm.internal.example/v1', ANTHROPIC_AUTH_TOKEN: 'tok-very-secret-9' });
+    expect(JSON.stringify([...t.hub.store.all()])).not.toContain('tok-very-secret');
+    expect(JSON.stringify([...t.hub.store.all()])).toContain('llm.internal.example'); // plain variables are settings, in the log
+
+    // No longer secret: its stored value is deleted.
+    await t.human.call('provider.save', { providerId, settings: { ...settings, secretEnv: [] } });
+    expect(secrets.get(`${providerId}:ANTHROPIC_AUTH_TOKEN`)).toBeUndefined();
+    await expect(t.human.call('provider.save', { providerId, settings: { ...settings, env: [{ name: 'ANTHROPIC_AUTH_TOKEN', value: 'x' }] } })).rejects.toThrow('set twice');
+    await expect(t.human.call('provider.save', { providerId, settings: { ...settings, env: [{ name: '1BAD', value: 'x' }] } })).rejects.toThrow();
   });
 
   it('refuses to start agents it can’t run properly', async () => {

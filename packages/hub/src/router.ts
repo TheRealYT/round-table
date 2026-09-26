@@ -24,6 +24,7 @@ import { boardGet, boardRead, boardView } from './board-queries.ts';
 import type { HubInternals } from './internals.ts';
 import { ackDeliveries, pendingDeliveries } from './projectors/deliveries.ts';
 import { agentOf, RpcError, type Session } from './session.ts';
+import { providerEnv, secretKey } from './supervisor.ts';
 
 type Handler = (session: Session, input: any) => unknown | Promise<unknown>;
 
@@ -119,11 +120,11 @@ export class Router {
         const kind = providerKind(provider.settings.kind)!;
         const driver = hub.drivers[provider.settings.kind];
         if (!driver) return { ok: false, message: `Round Table can’t run ${kind.label} yet: its driver hasn’t passed the check.`, ms: 0, costUsd: null };
-        const env: Record<string, string> = {};
-        if (provider.settings.auth === 'api-key') {
-          const secret = hub.secrets.get(provider.providerId);
-          if (!secret) return { ok: false, message: 'No API key is set.', ms: 0, costUsd: null };
-          env[kind.apiKeyEnv] = secret;
+        let env: Record<string, string>;
+        try {
+          env = providerEnv(provider, hub.secrets);
+        } catch (error) {
+          return { ok: false, message: `${error instanceof Error ? error.message : String(error)}.`, ms: 0, costUsd: null };
         }
         return driver.test({ command: provider.settings.command, env, model: provider.settings.model });
       },
@@ -210,13 +211,24 @@ export class Router {
         };
       },
       // The value goes to the secret store only; the command (and so the log) sees whether one is set.
-      'provider.secret': (session, input: { providerId: ProviderId; value: string | null }) => {
+      'provider.secret': (_session, input: { providerId: ProviderId; name: string | null; value: string | null }) => {
         const provider = hub.model.providers[input.providerId];
         if (!provider || provider.removed) throw new RpcError('rejected', 'no such provider');
-        if (input.value === null) hub.secrets.delete(input.providerId);
-        else hub.secrets.set(input.providerId, input.value.trim());
-        hub.bus.dispatch('provider.secret_mark', { providerId: input.providerId, set: input.value !== null }, { kind: 'hub', component: 'router' });
+        if (input.name !== null && !(provider.settings.secretEnv ?? []).includes(input.name)) {
+          throw new RpcError('rejected', `${input.name} isn’t one of this provider’s secret variables; add it to the provider first`);
+        }
+        const key = secretKey(input.providerId, input.name);
+        if (input.value === null) hub.secrets.delete(key);
+        else hub.secrets.set(key, input.value.trim());
+        hub.bus.dispatch('provider.secret_mark', { providerId: input.providerId, set: input.value !== null, name: input.name }, { kind: 'hub', component: 'router' });
         return { ok: true };
+      },
+      // A variable dropped from the secret list loses its stored value.
+      'provider.save': (session, input: { providerId?: ProviderId; settings: { secretEnv: string[] } }) => {
+        const before = input.providerId ? (hub.model.providers[input.providerId]?.settings.secretEnv ?? []) : [];
+        const out = this.dispatch(session, 'provider.save', input) as { providerId: string };
+        for (const name of before.filter((n) => !input.settings.secretEnv.includes(n))) hub.secrets.delete(secretKey(out.providerId, name));
+        return out;
       },
       // One key pair per agent, made here: core sees only the public half, the host stores the identity.
       'agent.spawn': async (session, input: { projectId: string; providerId: string; names: string[]; tags: string[] }) => {

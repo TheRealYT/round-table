@@ -97,6 +97,7 @@ export interface ProviderKindDef {
   install: string;
   driverVerified: boolean;
   models: readonly string[];
+  envHints: readonly string[];
 }
 
 export interface ProviderSettings {
@@ -107,12 +108,15 @@ export interface ProviderSettings {
   model: string;
   extraArgs: string[];
   maxInstances: number;
+  env: Array<{ name: string; value: string }>;
+  secretEnv: string[];
 }
 
 export interface ProviderRecord {
   providerId: string;
   settings: ProviderSettings;
   hasSecret: boolean;
+  secretsSet: string[];
   createdAt: number;
   running: number;
   agents: Array<{ agentId: string; name: string; projectId: string; run: boolean; costUsd: number; live: LiveState | null }>;

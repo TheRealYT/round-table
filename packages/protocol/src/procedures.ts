@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AgentId, ChangeRequestId, PairingId, ProjectId, ProviderId, RequestId, Sha, TaskId, TicketId, VoteId } from './ids.ts';
-import { ProviderKind, ProviderSettings } from './providers.ts';
+import { EnvName, ProviderKind, ProviderSettings } from './providers.ts';
 import { ControlAction, MessageType, Priority } from './message.ts';
 import type { PrincipalKind } from './principal.ts';
 import { SECTION_NAMES } from './sections.ts';
@@ -539,7 +539,7 @@ export const PROCEDURES = [
   proc({ name: 'provider.list', kind: 'query', allow: ['human'], stream: 'system', mcp: false, summary: 'Configured providers (CLI tools), whether each has a credential, and the kinds Round Table knows.', input: z.object({}), output: pending }),
   proc({ name: 'provider.save', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Add a provider, or change one: binary, sign-in, model, extra arguments, instance limit.', input: z.object({ providerId: ProviderId.optional(), settings: ProviderSettings }), output: z.object({ providerId: ProviderId }) }),
   proc({ name: 'provider.remove', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Remove a provider whose agents are all stopped.', input: z.object({ providerId: ProviderId }), output: pending }),
-  proc({ name: 'provider.secret', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Store or clear a provider’s API key. The hub keeps it outside the log; nothing can read it back.', input: z.object({ providerId: ProviderId, value: z.string().min(1).max(4000).nullable() }), output: z.object({ ok: z.boolean() }) }),
+  proc({ name: 'provider.secret', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Store or clear a provider’s API key, or the value of one of its secret environment variables (`name`). The hub keeps it outside the log; nothing can read it back.', input: z.object({ providerId: ProviderId, name: EnvName.nullable().default(null), value: z.string().min(1).max(4000).nullable() }), output: z.object({ ok: z.boolean() }) }),
   proc({ name: 'provider.detect', kind: 'query', allow: ['human'], stream: 'system', mcp: false, summary: 'Is the CLI installed on the hub machine, and which version?', input: z.object({ kind: ProviderKind, command: z.string().max(500).default('') }), output: z.object({ found: z.boolean(), version: z.string().nullable(), path: z.string().nullable(), error: z.string().nullable() }) }),
   proc({ name: 'provider.test', kind: 'query', allow: ['human'], stream: 'system', mcp: false, summary: 'Run one tiny prompt through the provider to check that it is signed in.', input: z.object({ providerId: ProviderId }), output: z.object({ ok: z.boolean(), message: z.string(), ms: z.number(), costUsd: z.number().nullable() }) }),
   proc({ name: 'agent.spawn', kind: 'command', allow: ['human'], stream: 'project', mcp: false, summary: 'Start agents from a provider in a project: one per name, each in its own worktree.', input: z.object({ projectId: ProjectId, providerId: ProviderId, names: z.array(z.string().min(1).max(40)).min(1).max(10), tags: z.array(z.string().max(40)).max(10).default([]) }), output: z.object({ started: z.array(z.object({ name: z.string(), agentId: AgentId })), failed: z.array(z.object({ name: z.string(), error: z.string() })) }) }),
