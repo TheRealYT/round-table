@@ -22,3 +22,15 @@ Also: a nested `claude` inherits the parent Claude Code session's environment (`
 - `wait` long-polling, timeouts, "type continue", attention guesses, pairing codes and chat tokens are not needed for driven agents: the hub starts them, so it issues their identity itself.
 - Status is exact: running (turn in progress), idle (turn ended, waiting for a message), stopped/crashed (process exit).
 - Other CLIs (Codex, Gemini CLI, Cursor, opencode) need the same six checks before their drivers are written.
+
+## Checking another CLI
+
+```sh
+node spikes/s8-drivers/check.mjs <claude-code|codex|antigravity|cursor|opencode> [--bin <path>]
+```
+
+Run it where the CLI is installed and logged in. It needs only Node and git: the stand-in hub (`board-server.mjs`) is a dependency-free MCP server with a `report` tool and a slow `fetch_plan` tool. It runs four headless turns in a fresh sample repo and checks the six questions above: headless JSON output, no approval prompts (a real commit), MCP tools (calls reach the stand-in hub), resume (a codeword from turn 1), interrupt (SIGINT while waiting on the slow tool, then the next turn continues), and cost or token fields.
+
+Each CLI's recipe is in `check.mjs`. Only Claude Code's is verified: on 2026-09-26 it passed 6 of 6, stopping 0.3 s after SIGINT. The others come from each CLI's docs. Flags the CLI's `--help` doesn't list are left out, and the run says so. Every run writes `cli-check-<cli>-<time>/` and a `.tar.gz` of it with the exact commands, raw output, `--help` and a `report.md`. That is what a driver is built from, whether the checks pass or fail.
+
+The interrupt check uses a slow tool call and not a shell `sleep`, because Claude Code ran `sleep 90` in the background and ended its turn at once.

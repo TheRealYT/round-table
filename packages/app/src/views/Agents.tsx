@@ -331,7 +331,7 @@ function ProviderCard({ provider, kind, projects, canRun, onOpenProject }: { pro
       )}
       <div className="provider-foot">
         {!kind.driverVerified ? (
-          <p className="small muted">Round Table doesn’t drive {kind.label} yet: it needs the same check Claude Code passed (<code>spikes/s8-drivers</code>). Your settings are kept, and starting agents unlocks once the check passes.</p>
+          <p className="small muted">Round Table doesn’t drive {kind.label} yet. To check it, run <code>node spikes/s8-drivers/check.mjs {kind.kind}</code> on the hub machine (where {kind.binary} is installed and logged in) and send back the report it makes. Your settings here are kept; starting agents unlocks once its driver is built.</p>
         ) : <SpawnForm provider={provider} projects={projects} ready={ready} reason={!kind.driverVerified ? `Round Table can’t run ${kind.label} yet: its driver hasn’t passed the check.` : !canRun ? 'This hub can’t run agents.' : needsKey ? (unsetVars.length > 0 ? `Set a value for ${unsetVars.join(', ')} first (Edit).` : 'Add the API key first.') : detect.data?.found === false ? `${kind.binary} isn’t installed on the hub machine.` : undefined} />}
         {provider.agents.length > 0 && <ProviderAgents provider={provider} projects={projects} onOpenProject={onOpenProject} />}
       </div>

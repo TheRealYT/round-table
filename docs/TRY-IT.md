@@ -138,7 +138,7 @@ That installs an agent you run yourself (path B). With path A you only attach th
 | Home, Inbox, Logs with time travel, Metrics, History, Settings in the app | S5 | |
 | Git watcher (commits logged without agents reporting), BOARD.md export, retro, retention, hook adapter | S6 | |
 | App login surviving a hub restart | later | `rt hub login` |
-| The hub running Codex, Antigravity CLI, Cursor CLI or opencode | after each passes the S8 driver check | Set them up now; join them from a chat (path B) meanwhile. |
+| The hub running Codex, Antigravity CLI, Cursor CLI or opencode | after each passes the S8 driver check | Run `node spikes/s8-drivers/check.mjs <codex\|antigravity\|cursor\|opencode>` where the CLI is logged in and send back the `.tar.gz` it makes; its driver is built from that. Meanwhile, join them from a chat (path B). |
 
 ## How the agent loop works
 
