@@ -1,4 +1,4 @@
-# Try Round Table (state after S2)
+# Try Round Table (state after S2b)
 
 This is a guide to testing the current build by hand: what you need, three ways to run it, and an honest list of what works and what doesn't yet.
 
@@ -6,7 +6,7 @@ This is a guide to testing the current build by hand: what you need, three ways 
 
 - Node.js 24 LTS (26 also works) and pnpm 10
 - git
-- An MCP client for your agents. Claude Code is tested end to end. Codex CLI, Gemini CLI and opencode are set up and seen to connect, but no real session has been run in them yet (see [ADR-0014](architecture/adr/0014-any-mcp-client.md)).
+- A coding CLI for the agents, installed and logged in **on the machine the hub runs on** (ideally a sandbox, since agents run without approval prompts). Claude Code can be run by the hub today. Codex, Gemini CLI, Cursor CLI and opencode can be set up in the app, but the hub starts them only once their driver passes the same check ([ADR-0018](architecture/adr/0018-round-table-runs-the-agents.md)).
 - A browser on the same machine. The hub only listens on 127.0.0.1.
 
 ```sh
@@ -16,7 +16,27 @@ pnpm --filter @round-table/app build
 alias rt="node $PWD/packages/cli/src/main.ts"   # optional shorthand used below
 ```
 
-## Path A: guided demo (recommended, about 10 minutes)
+## Path A: the hub runs the agents (recommended, about 5 minutes)
+
+No chat windows. You set up the CLI once, and the hub starts, wakes and stops the agents itself.
+
+```sh
+rt hub start          # keep it running; open the login link it prints
+```
+
+1. **Agents** page (the app opens on it): **Add a provider** → **Claude Code**. Pick the sign-in: *the CLI's own login* (run `claude` once on this machine and log in) or an *API key* (kept by the hub in a private file, never in its log). Optionally set the model and how many agents may run at once. **Test sign-in** runs one tiny prompt to check it.
+2. Add a project in the sidebar and fill in **Set up the project**: the goal, a repository path, and the test command (for a quick try, make a sample repo with `rt demo --dir ~/rt-demo` and use `~/rt-demo/repo` and `sh test.sh`).
+3. Back on **Agents**, in the provider's card: choose the project, type names (e.g. `Lead, Ada, Bo`) and click **Start 3 agents**. Each gets its own git worktree under the hub's data folder.
+4. Open the project. **The table** shows each agent's seat, ringed by its status (working, idle, stopped, crashed). Select a seat for its live transcript, turns, cost and tokens, and **Interrupt**, **Stop** or **Start** buttons. Click **Make leader** on Lead.
+5. When tasks are proposed, click **Approve plan**. Watch the claim, change request, review and test by another agent, the hub's test run and the merge. Talk to the team from the composer; your message becomes each agent's next turn.
+
+Last real run (`node e2e/real-driven.ts`): three Claude Code agents delivered the sample change in about 40 seconds for about $0.80 in total, with no chat open.
+
+**If the hub runs as root** (common in sandboxes), Claude Code refuses to run without approval prompts unless `IS_SANDBOX=1` is set; the hub sets it for the agents it starts.
+
+## Path B: agents in your own chats (guided demo, about 10 minutes)
+
+The older way, still supported: you run each agent in its own chat or terminal, and it joins by pairing.
 
 ```sh
 rt hub start                        # terminal 1, keep it running; open the login link it prints
@@ -38,7 +58,7 @@ rt demo --dir ~/rt-demo             # add --client codex|gemini|opencode|cursor|
 
 Lost the login link? Run `rt hub login`.
 
-## Path A2: add it to any IDE by hand (Cursor, Antigravity, VS Code, …)
+## Path B2: add it to any IDE by hand (Cursor, Antigravity, VS Code, …)
 
 With the hub running, add this stdio server to the IDE's MCP config. Use absolute paths, and for `command` use the output of `which node` (Node 24):
 
@@ -65,22 +85,23 @@ With the hub running, add this stdio server to the IDE's MCP config. Use absolut
   - **VS Code:** `.vscode/mcp.json`, with `"servers"` instead of `"mcpServers"` and `"type": "stdio"`.
 - `rt agent install --client generic` prints this entry for you.
 
-## Path B: fully automatic (Claude Code, about 2 minutes)
+## Path C: fully automatic scripts (Claude Code)
 
 ```sh
+node e2e/real-driven.ts      # the hub runs a real leader and two workers; they deliver a change
 node e2e/real-claude.ts      # two real sessions pair through the app and message each other
 node e2e/real-claude-s2.ts   # a real leader and two workers deliver a change to a sample repo
 ```
 
 The second script plays the human. It sets up the project, pairs three agents (each told only "Join the Round Table as …" and given its code), approves the plan, and says "stop" at the end. Everything in between is driven by the Round Table. It prints the agents' transcripts file, the change request and the resulting git graph. It needs the `claude` CLI to be logged in. Last run: the task was done in under two minutes, with zero restarts, and all agents stopped within seconds of being told to.
 
-## Path C: your own repository
+## Path D: your own repository
 
 ```sh
 rt agent install --client claude-code --slot ada --dir ~/work/ada --repo ~/code/your-repo
 ```
 
-Pairing and setup are the same as in path A. Things to know:
+That installs an agent you run yourself (path B). With path A you only attach the repository to the project and start agents from the Agents page. Things to know:
 
 - **Keep `main` unchecked-out** in the repository you attach, for example with `git switch --detach` in its main checkout. The hub moves `main` when it merges, which would leave a checkout of it out of date. The app warns you when this is the case.
 - **The test command runs in a fresh worktree** of main plus the change, so it must install its own dependencies, e.g. `npm ci && npm test`. It runs with your user's permissions, without a sandbox.
@@ -98,8 +119,9 @@ Pairing and setup are the same as in path A. Things to know:
 | Tasks | Plan approval by the human, claim and release (workers only), one branch per task | |
 | Change requests | Open, refresh after new commits, review and test requests, verdicts tied to the exact commit | Nobody reviews their own work; the leader never reviews. |
 | Merge gate | The hub merges main + the change in a scratch worktree, runs the test command, and moves main by compare-and-swap | A failing run or a conflict leaves main untouched and sends the task back to the author. |
-| Agent loop | Every tool result carries the next step from the board; agents keep working through tools until told to stop; each agent card shows what its chat is doing (working, waiting for messages, stopped) | No role prompts needed. |
-| App | Login, Pairing, projects, agents with live state, activity and idle warnings, Setup, task board, change requests, feed, composer | Updates live. |
+| Hub-run agents | Providers per CLI (binary, sign-in, API key, model, limit), install check and test run, starting several agents from one provider, worktree per agent, messages and board work delivered as turns, exact status, cost and tokens per turn, interrupt, stop and start, restart after a crash by resuming the conversation, and again after a hub restart | Claude Code only for now. |
+| Agent loop (chat agents) | Every tool result carries the next step from the board; agents keep working through tools until told to stop; each agent card shows what its chat is doing (working, waiting for messages, stopped) | No role prompts needed. |
+| App | Agents (providers and running agents), the round table with transcripts and controls, Pairing, projects, Setup, task board, change requests, feed, composer; dark and light | Updates live. |
 | Clients | Claude Code (verified in real sessions); Codex, Gemini CLI, opencode (config verified); Cursor, VS Code (from their docs) | `rt agent install --client …` |
 | Durability | Hub restart keeps everything; agents reconnect and resume; merges that were interrupted resume | |
 
@@ -116,9 +138,13 @@ Pairing and setup are the same as in path A. Things to know:
 | Home, Inbox, Logs with time travel, Metrics, History, Settings in the app | S5 | |
 | Git watcher (commits logged without agents reporting), BOARD.md export, retro, retention, hook adapter | S6 | |
 | App login surviving a hub restart | later | `rt hub login` |
-| Real sessions in Codex, Gemini CLI or opencode | needs credentials | Try one and report back; its profile uses safe defaults. |
+| The hub running Codex, Gemini CLI, Cursor CLI or opencode | after each passes the S8 driver check | Set them up now; join them from a chat (path B) meanwhile. |
 
 ## How the agent loop works
+
+**Agents the hub runs (path A).** The hub's supervisor owns the loop. It starts each agent's CLI headless with Round Table's tools. When the agent ends a turn, it's idle. A message for it, or work the board has for it (the same next step described below), becomes its next turn. Messages count as delivered only when that turn ends. A crashed agent is restarted by resuming its conversation, with backoff, and the table shows it red until then. Stop, Start and Interrupt act on the process itself.
+
+**Agents in your own chats (path B):**
 
 - **The chat only starts a session.** After `join_confirm`, the agent is told that the Round Table drives it, not the chat.
 - **Every Round Table tool result ends with `[Round Table] next: …`,** computed by the hub from the board. For a worker the order is: answer a review or test request waiting on you, then work on your own task (implement, open the change request, ask for review and test, fix feedback, rebase), then claim a ready task, then propose tasks for the goal. The leader is told which proposal to commit or reject next. Otherwise the step is "call wait", and waiting happens inside the `wait` tool, never by ending the turn.
@@ -129,6 +155,8 @@ Pairing and setup are the same as in path A. Things to know:
 
 ## Things worth trying
 
+- **Stop and start (path A).** Stop an agent from its seat, send a message, then start it again. It resumes its conversation and gets the message as its first turn.
+- **Crash (path A).** Kill an agent's `claude` process. Its seat turns red, and within seconds the hub restarts it on the same conversation.
 - **Interrupt.** Send an instruction from the composer while an agent is working. It should act on it at its next Round Table tool call.
 - **Restart.** Kill an agent's client and start it again in the same folder. It rejoins by itself; the feed shows a new session.
 - **Stale approval.** After Bo approves, ask Ada to commit one more change. The old approval stops counting and the task goes back to review.

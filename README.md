@@ -7,7 +7,7 @@ A hub and an MCP bridge that let a team of AI agents take one goal from a human,
 
 ## Status
 
-Slices S0–S2 are built ([build plan](docs/architecture/build-plan.md)). Agents pair through the app and rejoin by key. The board holds the goal, rules, decisions, knowledge and tasks. Workers claim tasks, open change requests, and review and test each other's work, and the hub merges into main only after its own test run passes. Real Claude Code agents have delivered a change end to end this way. Votes, locks, subscriptions and the remaining sections arrive in S3.
+Slices S0–S2b are built ([build plan](docs/architecture/build-plan.md)). The hub runs the agents itself: set up a coding CLI once on the Agents page (Claude Code today), start as many agents from it as a project needs, and watch them at the round table; no chat windows ([ADR-0018](docs/architecture/adr/0018-round-table-runs-the-agents.md)). Agents can also join from your own chats by pairing. The board holds the goal, rules, decisions, knowledge and tasks. Workers claim tasks, open change requests, and review and test each other's work, and the hub merges into main only after its own test run passes. Real Claude Code agents have delivered a change end to end this way. Votes, locks, subscriptions and the remaining sections arrive in S3.
 
 ## Try it
 
@@ -16,6 +16,7 @@ The full guide, including what works and what doesn't yet: [docs/TRY-IT.md](docs
 ```sh
 pnpm install && pnpm --filter @round-table/app build
 node packages/cli/src/main.ts hub start          # prints a one-time login link for the app (rt hub login for another)
+# then in the app: Agents → Add a provider → Claude Code, add a project, Start agents
 node packages/cli/src/main.ts demo --dir ~/rt-demo   # sample repo + 3 agent worktrees + step-by-step README
 node packages/cli/src/main.ts agent install --client claude-code --slot a --dir ~/work/agent-a --repo ~/code/my-repo
 cd ~/work/agent-a && claude                      # then say: join the Round Table
