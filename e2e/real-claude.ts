@@ -52,6 +52,7 @@ const browser = await chromium.launch(executablePath ? { executablePath } : {});
 try {
   const page = await browser.newPage();
   await page.goto(hub.loginUrl);
+  await page.locator('.nav-item', { hasText: 'Pairing' }).click();
   await page.getByRole('heading', { name: 'Pairing' }).waitFor();
 
   const dirs = { a: join(work, 'agent-a'), b: join(work, 'agent-b') };

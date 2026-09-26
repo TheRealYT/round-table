@@ -41,23 +41,29 @@ export function BoardPanel({ projectId }: { projectId: string }) {
   if (!view) return null;
   const names = new Map(view.roster.map((r) => [r.agentId, r.name]));
   const name = (id: string | null) => (id ? names.get(id) ?? shortId(id) : '—');
+  const complete = Boolean(view.goal && view.project.repo && view.rules?.data.testCommand);
+  const setup = (
+    <div className="setup">
+      <GoalForm projectId={projectId} goal={view.goal} />
+      <RepoForm projectId={projectId} repo={view.project.repo} />
+      <TestCommandForm projectId={projectId} rules={view.rules} />
+    </div>
+  );
   return (
     <>
-      <section aria-label="Setup">
-        <h2>Setup</h2>
-        <div className="setup">
-          <GoalForm projectId={projectId} goal={view.goal} />
-          <RepoForm projectId={projectId} repo={view.project.repo} />
-          <TestCommandForm projectId={projectId} rules={view.rules} />
-        </div>
-      </section>
+      {!complete && (
+        <section aria-label="Setup">
+          <div className="section-head"><h2>Set up the project</h2><span className="muted small">Agents work toward the goal, in worktrees of the repository; the hub runs the test command before every merge.</span></div>
+          {setup}
+        </section>
+      )}
       <TasksBoard projectId={projectId} view={view} name={name} />
       <section aria-label="Change requests">
-        <h2>Change requests</h2>
+        <div className="section-head"><h2>Change requests</h2></div>
         {(changes?.records ?? []).length === 0 ? (
           <p className="empty">None yet. Workers open one per task once they have commits on the task branch.</p>
         ) : (
-          <table className="table changes">
+          <div className="table-wrap"><table className="table changes">
             <thead>
               <tr><th>Task</th><th>Branch @ head</th><th>Review</th><th>Tests</th><th>Hub run</th><th>Status</th></tr>
             </thead>
@@ -77,9 +83,17 @@ export function BoardPanel({ projectId }: { projectId: string }) {
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
+      {complete && (
+        <section aria-label="Setup">
+          <details>
+            <summary className="section-head" style={{ cursor: 'pointer' }}><h2 style={{ display: 'inline' }}>Project setup</h2> <span className="muted small">goal v{view.goal?.version}, {view.project.repo}, <code>{String(view.rules?.data.testCommand)}</code></span></summary>
+            {setup}
+          </details>
+        </section>
+      )}
     </>
   );
 }
@@ -93,15 +107,17 @@ function TasksBoard({ projectId, view, name }: { projectId: string; view: Overvi
   const proposed = view.taskCounts.proposed ?? 0;
   return (
     <section aria-label="Tasks">
-      <h2>
-        Tasks
-        {proposed > 0 && (
-          <button className="primary small" disabled={approving} onClick={() => approve({ projectId })}>
-            Approve plan ({proposed} proposed)
-          </button>
-        )}
+      <div className="section-head">
+        <h2>Tasks</h2>
         {view.openTickets > 0 && <span className="muted small">{view.openTickets} proposal{view.openTickets === 1 ? '' : 's'} waiting for the leader</span>}
-      </h2>
+        {proposed > 0 && (
+          <div className="actions">
+            <button className="primary" disabled={approving} onClick={() => approve({ projectId })}>
+              Approve plan ({proposed} proposed)
+            </button>
+          </div>
+        )}
+      </div>
       {error && <p className="error">{error}</p>}
       {view.tasks.length === 0 ? (
         <p className="empty">No tasks yet. Agents propose tasks; the leader commits them; you approve the plan.</p>

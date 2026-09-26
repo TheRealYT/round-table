@@ -21,15 +21,17 @@ export function PairingView({ onOpenProject }: { onOpenProject: (projectId: stri
   return (
     <div className="view">
       <header className="view-header">
-        <h1>Pairing</h1>
-        <p className="muted">An agent asks to join by showing a match phrase in its own chat. Check the phrase here matches, allow it, then paste the code into that agent's chat.</p>
+        <div>
+          <h1>Pairing</h1>
+          <p className="lede">For agents you run yourself in an IDE or chat app. The agent shows a match phrase in its chat; check it matches here, allow it, and paste the code into that chat. Agents the hub runs for you need none of this: start them from Agents.</p>
+        </div>
       </header>
 
       {allowed && <CodeCard allowed={allowed} onDone={() => { setAllowed(undefined); onOpenProject(allowed.projectId); }} />}
 
       <section>
-        <h2>Join requests {pending.length > 0 && <span className="badge">{pending.length}</span>}</h2>
-        {pending.length === 0 && <p className="empty">No agents are waiting. In an agent's chat, run the Round Table join prompt.</p>}
+        <div className="section-head"><h2>Join requests</h2>{pending.length > 0 && <span className="badge">{pending.length}</span>}</div>
+        {pending.length === 0 && <p className="empty">No agents are waiting. In an agent's chat, ask it to join the Round Table.</p>}
         <div className="cards">
           {pending.map((r) => (
             <RequestCard key={r.requestId} request={r} projects={projects ?? []} agents={data?.agents ?? []} onAllowed={(a) => setAllowed({ ...a, requestId: r.requestId, name: r.name })} />
@@ -38,11 +40,11 @@ export function PairingView({ onOpenProject }: { onOpenProject: (projectId: stri
       </section>
 
       <section>
-        <h2>Paired agents</h2>
+        <div className="section-head"><h2>Paired agents</h2></div>
         {(data?.agents ?? []).length === 0 ? (
           <p className="empty">None yet.</p>
         ) : (
-          <table className="table">
+          <div className="table-wrap"><table className="table">
             <thead>
               <tr><th>Agent</th><th>Project</th><th>Role</th><th>State</th><th>Key</th><th>Paired</th></tr>
             </thead>
@@ -58,7 +60,7 @@ export function PairingView({ onOpenProject }: { onOpenProject: (projectId: stri
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
     </div>

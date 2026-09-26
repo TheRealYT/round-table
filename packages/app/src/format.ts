@@ -8,7 +8,7 @@ export function timeAgo(ts: number, now = Date.now()): string {
 }
 
 export function clock(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 export function shortId(id: string): string {
@@ -22,7 +22,8 @@ export function usd(value: number): string {
 }
 
 export function duration(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))} ms`;
+  const s = Math.round(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
@@ -31,4 +32,8 @@ export function duration(ms: number): string {
 /** mcp__roundtable__board_propose → board_propose; Bash stays Bash. */
 export function toolName(tool: string): string {
   return tool.replace(/^mcp__[^_]+__/, '');
+}
+
+export function tokens(n: number): string {
+  return n < 1000 ? String(n) : n < 1_000_000 ? `${Math.round(n / 1000)}k` : `${(n / 1_000_000).toFixed(1)}M`;
 }

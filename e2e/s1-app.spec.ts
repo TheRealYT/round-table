@@ -12,6 +12,7 @@ test.afterEach(async () => h.close());
 
 test('the human pairs an agent through the app and they exchange messages', async ({ page }) => {
   await page.goto(h.loginUrl());
+  await page.locator('.nav-item', { hasText: 'Pairing' }).click();
   await expect(page.getByRole('heading', { name: 'Pairing' })).toBeVisible();
   await expect(page.getByText('No agents are waiting')).toBeVisible();
 
@@ -20,7 +21,7 @@ test('the human pairs an agent through the app and they exchange messages', asyn
   const pending = await requestJoin(agent, { name: 'Worker A', client: 'scripted', tags: ['backend'] });
   const card = page.locator('article.request', { hasText: pending.request.matchPhrase });
   await expect(card).toBeVisible();
-  await expect(page.locator('.sidebar .badge')).toHaveText('1');
+  await expect(page.locator('.nav-item', { hasText: 'Pairing' }).locator('.badge')).toHaveText('1');
 
   await card.getByLabel('Project', { exact: true }).selectOption('new');
   await card.getByLabel('New project name').fill('Checkout redesign');
@@ -46,7 +47,7 @@ test('the human pairs an agent through the app and they exchange messages', asyn
   // The agent's activity and a message show up live in the feed.
   await agent.call('activity', { doing: 'reading the cart page', next: 'write a plan' });
   await expect(agentCard.getByText('reading the cart page')).toBeVisible();
-  await page.getByRole('button', { name: 'Make leader' }).click();
+  await agentCard.getByRole('button', { name: 'Make leader' }).click();
   await expect(agentCard.locator('.role')).toHaveText('leader');
   await expect(page.locator('.feed')).toContainText('Worker A is now leader');
 
@@ -58,6 +59,7 @@ test('the human pairs an agent through the app and they exchange messages', asyn
 
 test('a new chat asking to continue as a paired agent needs the human, and stays that agent', async ({ page }) => {
   await page.goto(h.loginUrl());
+  await page.locator('.nav-item', { hasText: 'Pairing' }).click();
   const first = await h.agent();
   const pending = await requestJoin(first, { name: 'Ada', client: 'scripted' });
   const card = page.locator('article.request', { hasText: pending.request.matchPhrase });
