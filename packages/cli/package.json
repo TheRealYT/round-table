@@ -1,0 +1,19 @@
+{
+  "name": "@round-table/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "rt": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@round-table/agent": "workspace:*",
+    "@round-table/hub": "workspace:*"
+  }
+}
