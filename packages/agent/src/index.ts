@@ -12,3 +12,4 @@ export * from './bridge.ts';
 export * from './stdio.ts';
 export * from './install.ts';
 export * from './clients.ts';
+export * from './worktree.ts';

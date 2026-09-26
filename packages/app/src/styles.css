@@ -145,6 +145,22 @@ input, select, textarea { background: var(--surface); border: 1px solid var(--bo
 
 .logged-out { max-width: 520px; margin: 15vh auto; padding: var(--space-6); }
 
+h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 var(--space-2); color: var(--muted); }
+.setup { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-3); }
+.setup-item { display: flex; flex-direction: column; gap: var(--space-2); }
+.setup-item label, .setup-item .label { font-size: 12px; color: var(--muted); }
+.setup-item textarea { resize: vertical; }
+.setup-item p { margin: 0; }
+.setup-item button { align-self: flex-start; }
+.warning { color: var(--warn); }
+.kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(170px, 1fr); gap: var(--space-3); overflow-x: auto; padding-bottom: var(--space-2); }
+.column { background: var(--surface-2); border-radius: var(--radius); padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-2); }
+.task { padding: var(--space-2) var(--space-3); }
+.verdict { font-size: 12px; white-space: nowrap; }
+.verdict.ok, .chip.ok { color: var(--ok); }
+.verdict.bad, .chip.bad { color: var(--danger); }
+h2 button { margin-left: var(--space-2); }
+
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }

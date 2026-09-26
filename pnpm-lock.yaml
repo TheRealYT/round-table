@@ -20,6 +20,9 @@ importers:
       '@round-table/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@round-table/testkit':
+        specifier: workspace:*
+        version: link:packages/testkit
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.0

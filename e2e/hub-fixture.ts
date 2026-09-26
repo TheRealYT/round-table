@@ -21,6 +21,9 @@ export async function startHub() {
     base,
     loginUrl: () => `${base}/login?t=${hub.createLoginToken()}`,
     agent: async () => new HubClient(await new WsConnector(`ws://127.0.0.1:${port}`).connect('agent')),
+    /** The human's API outside the browser (same cookie the app gets from /login). */
+    human: async () =>
+      new HubClient(await new WsConnector(`ws://127.0.0.1:${port}`, { headers: { cookie: `rt_session=${hub.createHumanSession()}` } }).connect('app')),
     close: async () => {
       hub.close();
       await new Promise((r) => http.close(r));

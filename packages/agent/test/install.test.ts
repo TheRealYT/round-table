@@ -72,3 +72,24 @@ describe('rt agent install', () => {
     expect(replaceTomlTable(doc, 't', '[t]\nx = 9')).toBe('a = 1\n[u]\nz = 3\n\n[t]\nx = 9\n');
   });
 });
+
+describe('agent worktrees', () => {
+  it('creates a detached worktree per agent and keeps client config out of commits', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { createAgentWorktree } = await import('../src/index.ts');
+    dir = mkdtempSync(join(tmpdir(), 'rt-wt-'));
+    const repo = join(dir, 'repo');
+    const g = (cwd: string, ...a: string[]) => execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { encoding: 'utf8' }).trim();
+    execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+    writeFileSync(join(repo, 'a.txt'), 'a\n');
+    g(repo, 'add', '.');
+    g(repo, 'commit', '-q', '-m', 'init');
+    const wt = join(dir, 'agent-a');
+    expect(createAgentWorktree(repo, wt).created).toBe(true);
+    expect(createAgentWorktree(repo, wt).created).toBe(false);
+    expect(g(wt, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD');
+    installAgent({ ...base, client: 'claude-code', dir: wt });
+    expect(g(wt, 'status', '--porcelain')).toBe('');
+    expect(() => createAgentWorktree(repo, repo)).toThrow();
+  });
+});

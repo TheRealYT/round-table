@@ -54,6 +54,7 @@ export interface LogEvent {
   type: string;
   actor: string;
   role: string;
+  via: string;
   ts: number;
   payload: Record<string, unknown>;
 }

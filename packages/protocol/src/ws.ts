@@ -152,13 +152,16 @@ export class WsListener implements TransportListener {
 
 export class WsConnector implements TransportConnector {
   private readonly baseUrl: string;
+  private readonly headers: Record<string, string>;
 
-  constructor(baseUrl: string) {
+  /** `headers` lets Node clients present what a browser would (e.g. the human's login cookie in tests). */
+  constructor(baseUrl: string, options: { headers?: Record<string, string> } = {}) {
     this.baseUrl = baseUrl;
+    this.headers = options.headers ?? {};
   }
 
   async connect(endpoint: ConnectionInfo['endpoint']): Promise<Transport> {
-    const socket = new WebSocket(`${this.baseUrl}/${endpoint}`);
+    const socket = new WebSocket(`${this.baseUrl}/${endpoint}`, { headers: this.headers });
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve);
       socket.once('error', reject);

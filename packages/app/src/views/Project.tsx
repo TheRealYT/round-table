@@ -3,10 +3,12 @@ import { useCommand, useQuery } from '../hub.tsx';
 import { clock, shortId } from '../format.ts';
 import type { LogEvent, ProjectSummary, RosterRecord } from '../types.ts';
 import { StateDot } from './Pairing.tsx';
+import { BoardPanel } from './Board.tsx';
 
 const FEED_TYPES = [
   'human.posted', 'message.sent', 'roster.joined', 'roster.connected', 'roster.disconnected',
   'roster.stale', 'roster.gone', 'roster.role_changed', 'activity.reported',
+  'entry.versioned', 'task.status_changed', 'change_request.merged',
 ];
 
 export function ProjectView({ project }: { project: ProjectSummary }) {
@@ -29,6 +31,7 @@ export function ProjectView({ project }: { project: ProjectSummary }) {
           <div className="agents">{agents.map((a) => <AgentCard key={a.agentId} agent={a} projectId={project.projectId} />)}</div>
         )}
       </section>
+      <BoardPanel projectId={project.projectId} />
       <section className="feed-section" aria-label="Feed">
         <h2>Feed</h2>
         <Feed events={log?.events ?? []} names={names} />
@@ -61,7 +64,7 @@ function AgentCard({ agent, projectId }: { agent: RosterRecord; projectId: strin
 }
 
 function Feed({ events, names }: { events: LogEvent[]; names: Map<string, string> }) {
-  const who = (id: string) => (id.startsWith('human:') ? 'You' : names.get(id) ?? shortId(id));
+  const who = (id: string) => (id.startsWith('human:') ? 'You' : id === 'hub' ? 'Hub' : names.get(id) ?? shortId(id));
   const list = useRef<HTMLOListElement>(null);
   const pinned = useRef(true);
   // Follow new events while the reader is at the bottom; leave the scroll alone if they scrolled up.
@@ -112,6 +115,9 @@ function describe(e: LogEvent, who: (id: string) => string): string {
     case 'roster.gone': return `${agent} is gone (grace period over)`;
     case 'roster.role_changed': return `${agent} is now ${String(e.payload.role)}`;
     case 'activity.reported': return `${agent}: ${String(e.payload.doing)} · next: ${String(e.payload.next)}`;
+    case 'entry.versioned': return `${String(e.payload.section)} ${Number(e.payload.version) > 1 ? `updated (v${String(e.payload.version)})` : 'added'} by ${e.via === 'human' ? 'you' : who(e.actor)}`;
+    case 'task.status_changed': return `Task ${shortId(String(e.payload.taskId))}: ${String(e.payload.from)} → ${String(e.payload.to)} (${String(e.payload.reason)})`;
+    case 'change_request.merged': return `Hub merged ${String(e.payload.headSha).slice(0, 8)} into main as ${String(e.payload.mergeSha).slice(0, 8)}`;
     default: return e.type;
   }
 }

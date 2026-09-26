@@ -136,6 +136,7 @@ export class Hub {
   }
 
   close(): void {
+    this.bus.close();
     this.scheduler.stop();
     this.waiters.cancelAll();
     for (const d of this.detach) d();

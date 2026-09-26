@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CLIENTS, clientProfile, FileKeyStore, installAgent, rtHome, runAgentStdio } from '@round-table/agent';
+import { CLIENTS, clientProfile, createAgentWorktree, FileKeyStore, installAgent, rtHome, runAgentStdio } from '@round-table/agent';
 import { createHttpServer, Hub, loadOrCreateHubKey } from '@round-table/hub';
 import { WsConnector, WsListener } from '@round-table/protocol/ws';
 
@@ -15,7 +15,7 @@ const MAIN = fileURLToPath(import.meta.url);
 const COMMANDS: Record<string, { slice: string; usage: string; summary: string }> = {
   'hub start': { slice: 'S1', usage: '[--port 7777] [--data <dir>] [--app <dir>]', summary: 'Start the hub on 127.0.0.1 and print the one-time login URL.' },
   'agent run': { slice: 'S1', usage: '--slot <name> [--client <id>] [--hub <url>] [--wait-max-ms <n>] [--tools dynamic|static]', summary: 'Run rt-agent on stdio (what an agent\'s MCP client starts).' },
-  'agent install': { slice: 'S1', usage: '--client <id> --slot <name> [--dir <path>] [--hub <url>]', summary: `Write <dir>'s MCP config for a client so it runs rt-agent. Clients: ${Object.keys(CLIENTS).join(', ')}.` },
+  'agent install': { slice: 'S1', usage: '--client <id> --slot <name> [--dir <path>] [--repo <path> [--main <branch>]] [--hub <url>]', summary: `Write <dir>'s MCP config for a client so it runs rt-agent. Clients: ${Object.keys(CLIENTS).join(', ')}.` },
   hook: { slice: 'S6', usage: 'pre-tool-use | post-tool-use', summary: 'Hook adapter entry point, called by the agent client.' },
   supervise: { slice: 'S4', usage: '', summary: 'Restart dead agent sessions (D3).' },
 };
@@ -92,10 +92,18 @@ async function agentRun(args: string[]): Promise<void> {
 }
 
 function agentInstall(args: string[]): void {
-  const { values } = parseArgs({ args, options: { client: { type: 'string' }, slot: { type: 'string' }, dir: { type: 'string' }, hub: { type: 'string' } } });
+  const { values } = parseArgs({
+    args,
+    options: { client: { type: 'string' }, slot: { type: 'string' }, dir: { type: 'string' }, hub: { type: 'string' }, repo: { type: 'string' }, main: { type: 'string' } },
+  });
   if (!values.slot) throw new Error('--slot is required');
   if (!values.client) throw new Error(`--client is required: ${Object.keys(CLIENTS).join(', ')}`);
   const dir = resolve(values.dir ?? '.');
+  if (values.repo) {
+    // One worktree per agent (spec: Code sharing), detached at main; client config files stay out of commits.
+    const wt = createAgentWorktree(resolve(values.repo), dir, values.main ?? 'main');
+    console.log(wt.created ? `Created worktree ${dir} (detached at ${values.main ?? 'main'})` : `Using existing worktree ${dir}`);
+  }
   const hubUrl = values.hub ?? readHubPointer()?.url ?? `ws://127.0.0.1:${DEFAULT_PORT}`;
   const env = process.env.RT_HOME ? { RT_HOME: process.env.RT_HOME } : undefined;
   const { profile, files, notes } = installAgent({ client: values.client, dir, slot: values.slot, hubUrl, command: [process.execPath, MAIN], ...(env && { env }) });

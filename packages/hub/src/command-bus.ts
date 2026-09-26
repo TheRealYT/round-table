@@ -15,6 +15,7 @@ export class Bus implements CommandBus {
   private readonly model: Model;
   private readonly ctx: () => Ctx;
   private readonly listeners: CommitListener[] = [];
+  private closed = false;
 
   constructor(options: { store: EventStore; model: Model; ctx: () => Ctx }) {
     this.store = options.store;
@@ -26,7 +27,13 @@ export class Bus implements CommandBus {
     this.listeners.push(listener);
   }
 
+  /** After close, nothing is written: late socket closes during shutdown must not touch a closed store. */
+  close(): void {
+    this.closed = true;
+  }
+
   dispatch(name: string, input: unknown, principal: Principal, options: { timerId?: string } = {}): CommandResult {
+    if (this.closed) return { ok: false, rejection: { code: 'hub_closed', message: 'the hub is shutting down' }, events: [] };
     const handler = COMMANDS[name];
     if (!handler) {
       return { ok: false, rejection: { code: 'unknown_command', message: `no command "${name}"` }, events: [] };
