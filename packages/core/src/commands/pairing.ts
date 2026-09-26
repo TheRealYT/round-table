@@ -29,15 +29,16 @@ export const joinRequest: CommandHandler<{
     return reject('rate_limited', 'too many pending join requests from this origin');
   }
   const { publicKey } = command.input;
-  if (Object.values(model.agents).some((a) => a.publicKey === publicKey && !a.revoked)) {
-    return reject('key_in_use', 'this key is already paired; rejoin instead');
-  }
+  const owner = Object.values(model.agents).find((a) => a.publicKey === publicKey);
+  if (owner?.revoked) return reject('key_revoked', 'this key was revoked; pair again with a new key');
+  // A paired key: a new chat asks to continue as that agent. Only the human can allow it (ADR-0017).
+  const resumes = owner ? { resumes: owner.agentId } : {};
   const requestId = ctx.ids.next('pairing') as PairingId;
   const phrase = matchPhrase(ctx.random);
   const expiresAt = ctx.now + ctx.settings.pairingRequestTtlMs;
   return accept(
     [
-      makeEvent(ctx, HUB, SYSTEM, 'pairing.requested', { requestId, ...command.input, origin, matchPhrase: phrase, expiresAt }),
+      makeEvent(ctx, HUB, SYSTEM, 'pairing.requested', { requestId, ...command.input, origin, matchPhrase: phrase, expiresAt, ...resumes }),
       schedule(ctx, SYSTEM, expiresAt, 'pairing.expire', { requestId }),
     ],
     { requestId, matchPhrase: phrase },
@@ -59,7 +60,12 @@ export const allowPairing: CommandHandler<{
   const author = authorOf(command.principal);
   const events = [];
   let projectId = command.input.projectId;
-  if (projectId !== undefined) {
+  if (request.resumes !== null) {
+    // Continuing an existing agent: it stays in its project.
+    const agent = model.agents[request.resumes];
+    if (!agent || agent.revoked) return reject('unknown_agent', 'the agent this chat wants to continue no longer exists');
+    projectId = agent.projectId;
+  } else if (projectId !== undefined) {
     if (!project(model, projectId)) return reject('unknown_project', 'no such project');
   } else {
     if (!command.input.newProjectName) return reject('invalid_input', 'choose a project or name a new one');
@@ -114,8 +120,19 @@ export const joinConfirm: CommandHandler<{ requestId: PairingId; codeHash: strin
     }
     return reject('wrong_code', `wrong code (${ctx.settings.pairingMaxAttempts - attempts} attempts left)`, undefined, events);
   }
-  const agentId = ctx.ids.next('agent') as AgentId;
   const projectId = request.projectId;
+  if (request.resumes !== null) {
+    const agentId = request.resumes;
+    const role = model.projects[projectId]?.roster[agentId]?.role ?? 'worker';
+    return accept(
+      [
+        ...cancelTimers(model, ctx, SYSTEM, forRequest(request.requestId)),
+        makeEvent(ctx, HUB, SYSTEM, 'pairing.resumed', { requestId: request.requestId, agentId, projectId }),
+      ],
+      { agentId, projectId, role, resumed: true },
+    );
+  }
+  const agentId = ctx.ids.next('agent') as AgentId;
   const { name, client, tags, capabilities, publicKey, fingerprint } = request;
   return accept(
     [

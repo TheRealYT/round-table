@@ -44,6 +44,7 @@ const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
       codeExpiresAt: null,
       attempts: 0,
       agentId: null,
+      resumes: p.resumes ?? null,
     };
   },
   'pairing.allowed': (m, p) => {
@@ -59,6 +60,10 @@ const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
   },
   'pairing.origin_blocked': (m, p) => {
     m.blockedOrigins[p.origin] = true;
+  },
+  'pairing.resumed': (m, p) => {
+    const r = m.pairing[p.requestId];
+    if (r) Object.assign(r, { status: 'confirmed', agentId: p.agentId, codeHash: null });
   },
   'agent.paired': (m, p, e) => {
     const r = m.pairing[p.requestId];

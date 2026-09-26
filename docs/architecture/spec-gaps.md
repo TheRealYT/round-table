@@ -7,6 +7,7 @@ Status key:
 - **Refinement**: keeps the spec's behavior and only fixes how it is built. No human approval needed.
 - **Deviation (adopted)**: changes a "Suggested default" or build-brief detail. It was adopted with this architecture and is listed here so the human can see it.
 - **Approved**: a behavior change the human approved on 2026-09-26.
+- **Deviation (needs approval)**: a behavior change requested in this session and built on the branch; the human approves it before merging.
 
 | # | Spec says | What breaks in code | What we build | Status | ADR |
 |---|---|---|---|---|---|
@@ -33,6 +34,7 @@ Status key:
 | 21 | Package names `mcp-client/`, `human-app/` | "MCP client" is misleading: the package is an MCP *server* and a hub client. Also, the domain logic needs a home without IO. | Packages are `protocol`, `core` (new, pure), `hub`, `agent` (`rt-agent`), `cli` (new), `app`, `testkit`. | Deviation (adopted) | — |
 | 22 | "Bring your own: any MCP client joins the hub" | Timeouts, `tools/list_changed`, server instructions and config files differ per client; S0 verified them only for Claude Code. | **Client profiles** in rt-agent: `rt agent install --client` writes each client's project config. Unverified clients get the safe defaults: `wait` under 50 s, static tool lists with hub-enforced roles, and a briefing in the first tool result. | Refinement | [0014](adr/0014-any-mcp-client.md) |
 | 23 | D3: agents loop on `wait` until dismissed | Models treat the chat as the conversation: after pairing, or when only told to wait, they end their turn, and an MCP server can't wake them. Without a role prompt they don't know what to do. | The hub computes each agent's **next step from the board**, and rt-agent appends it to every tool result, with "waiting happens inside wait". Pairing hands control to the Round Table. The app flags idle agents so the human can type "continue". | Refinement | [0015](adr/0015-round-table-drives-the-loop.md) |
+| 24 | Rejoin: "needs no human and no code: the agent proves it holds the private key" | In an IDE, every chat shares one rt-agent and its key store, so holding the key doesn't show which chat is calling. Rejoin by name let any chat become any paired agent. | Named mode: each approved chat gets a **chat token** (hash on disk) required on every call. A new chat that claims a paired name sends a **resume request** that the human must allow (phrase + code), and then the old chat is stopped. Fixed slots rejoin as in the spec. | Deviation (needs approval) | [0017](adr/0017-a-name-is-not-a-password.md) |
 
 ## S0 results
 

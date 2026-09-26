@@ -41,6 +41,8 @@ export interface PairingRecord {
   codeExpiresAt: number | null;
   attempts: number;
   agentId: AgentId | null;
+  /** A new chat asking to continue as this existing agent (ADR-0017). */
+  resumes: AgentId | null;
 }
 
 export interface AgentRecord {

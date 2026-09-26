@@ -1,6 +1,6 @@
 # ADR-0016: Agent identity by join name, not by config
 
-- Status: accepted (2026-09-26)
+- Status: accepted (2026-09-26); rejoin by name and `as` superseded by [ADR-0017](0017-a-name-is-not-a-password.md)
 - Supersedes part of: [ADR-0003](0003-identity-slots-and-auto-rejoin.md) (identity slots)
 - See also: [ADR-0014](0014-any-mcp-client.md)
 

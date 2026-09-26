@@ -22,6 +22,8 @@ export interface EventPayloads {
     origin: string;
     matchPhrase: string;
     expiresAt: number;
+    /** Set when the key is already paired: a new chat asks to continue as that agent (ADR-0017). */
+    resumes?: AgentId;
   };
   'pairing.allowed': { requestId: PairingId; projectId: ProjectId; codeHash: string; codeExpiresAt: number };
   'pairing.denied': { requestId: PairingId };
@@ -40,6 +42,8 @@ export interface EventPayloads {
     publicKey: string;
     fingerprint: string;
   };
+  /** The human approved a new chat continuing as an existing agent (ADR-0017). */
+  'pairing.resumed': { requestId: PairingId; agentId: AgentId; projectId: ProjectId };
   'session.opened': { agentId: AgentId; projectId: ProjectId; epoch: number };
   'leader.assigned': { projectId: ProjectId; agentId: AgentId; previous: AgentId | null };
   // ── project stream ──
@@ -151,6 +155,7 @@ export const EVENT_DURABILITY: { [K in EventType]: Durability } = {
   'pairing.expired': 'durable',
   'pairing.origin_blocked': 'durable',
   'agent.paired': 'durable',
+  'pairing.resumed': 'durable',
   'session.opened': 'durable',
   'leader.assigned': 'durable',
   'roster.joined': 'durable',

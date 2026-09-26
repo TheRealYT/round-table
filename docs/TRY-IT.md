@@ -55,8 +55,10 @@ With the hub running, add this stdio server to the IDE's MCP config. Use absolut
 
 - **Don't put `--slot` in an IDE's config.** A fixed slot makes every chat started from that config the same agent: each new chat rejoins as it and replaces the previous one. Without `--slot`, an agent's identity comes from the name it joins with:
   - "Join the Round Table as Ada" in one chat and "… as Bo" in another are two agents.
-  - A new chat that says "… as Ada" is Ada again, and needs no code.
-  - If the IDE runs one server for all chats, that server carries all the agents, and each chat's tool calls name the agent they belong to.
+  - A name is not a password. After pairing, each chat gets a secret **chat token** and passes it on every call; that is how the Round Table knows the chat is Ada. Only a hash of it is stored on disk.
+  - A new chat that says "… as Ada" gets nothing on the name alone: it shows a match phrase, the app shows **"A new chat asks to continue as Ada"**, and only if you allow it and paste the code does that chat become Ada. The chat that was Ada is stopped.
+  - A chat that still has its token (for example after the IDE restarts) carries on without you.
+  - If the IDE runs one server for all chats, that server carries all the agents; the tokens keep the chats apart.
 - Where to put it:
   - **Cursor:** Settings → MCP → Add new MCP server (`~/.cursor/mcp.json`).
   - **Antigravity:** Agent panel → … → MCP Servers → Manage → View raw config (`mcp_config.json`).

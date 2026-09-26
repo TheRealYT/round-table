@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto';
 import {
   HubClient,
   HubError,
@@ -10,13 +11,18 @@ import { authenticate, confirmJoin, requestJoin, type HubInfo, type SessionInfo 
 import { inboxBanner, STATUS_PREFIX } from './banner.ts';
 import { formatItems, formatResult, type WaitItem } from './format.ts';
 import type { Identity } from './identity.ts';
-import { briefing, LOOP_REMINDER, PAIRED_WELCOME, roleBrief } from './instructions.ts';
+import { briefing, LOOP_REMINDER, PAIRED_WELCOME, roleBrief, TOKEN_NOTE } from './instructions.ts';
 import type { KeyStore, PendingJoin } from './keystore.ts';
 
 export type Role = 'unpaired' | 'worker' | 'leader';
 
 export interface SessionOptions {
   slot: string;
+  /**
+   * Named mode (ADR-0016/0017): the server may be shared by many chats, so a chat proves it is this
+   * agent with its chat token. A stored key alone never lets a chat in.
+   */
+  named: boolean;
   connector: TransportConnector;
   keyStore: KeyStore;
   clientName: string;
@@ -57,6 +63,11 @@ export class AgentSession {
   private boardVersion: number | undefined;
   private lastActivityAt: number;
   private reconnectDelay: number;
+  /**
+   * Named mode: the token hash a chat proved here. The hub session opens only while it matches the
+   * stored one, so after another process's chat takes over, a reconnect here doesn't take it back.
+   */
+  private unlockedHash: string | undefined;
 
   constructor(options: SessionOptions) {
     this.o = options;
@@ -97,7 +108,8 @@ export class AgentSession {
     this.hub = client;
     this.identity = await this.o.keyStore.load(this.hubInfo.hubId, this.slot);
     this.pendingJoin ??= await this.o.keyStore.loadPending(this.hubInfo.hubId, this.slot);
-    if (this.identity) await this.authenticate();
+    const unlocked = this.identity?.chatTokenHash !== undefined && this.identity.chatTokenHash === this.unlockedHash;
+    if (this.identity && (!this.o.named || unlocked)) await this.authenticate();
     this.reconnectDelay = this.o.reconnect.initialMs;
   }
 
@@ -127,6 +139,20 @@ export class AgentSession {
     timer.unref?.();
   }
 
+  /**
+   * Pairing calls need an unauthenticated connection. This agent's own connection is one until it
+   * authenticates; after that (a new chat asking to continue as it), use a short-lived one.
+   */
+  private async withPairingClient<T>(run: (client: HubClient) => Promise<T>): Promise<T> {
+    if (this.role === 'unpaired' && this.hub) return run(this.hub);
+    const client = new HubClient(await this.o.connector.connect('agent'));
+    try {
+      return await run(client);
+    } finally {
+      client.close();
+    }
+  }
+
   private async authenticate(): Promise<void> {
     if (!this.hub || !this.identity) return;
     const session = await authenticate(this.hub, this.identity);
@@ -137,36 +163,67 @@ export class AgentSession {
     this.log(`authenticated as ${this.identity.agentId} (${session.role}, epoch ${session.epoch}, ${session.resumed ? 'resumed' : 'new joiner'})`);
   }
 
+  /**
+   * Named mode: is `token` the one the human last approved for this agent? Returns why not, or
+   * undefined and opens the hub session. A new chat has no token, and an older chat's token stops
+   * working once the human approves a newer chat (ADR-0017).
+   */
+  async unlock(token: string): Promise<string | undefined> {
+    if (!this.identity) return `no agent "${this.slot}" is paired through this server: call join_request with your name`;
+    if (!this.identity.chatTokenHash || hashToken(token) !== this.identity.chatTokenHash) {
+      return `this chat token is not valid for "${this.slot}". Either another chat now works as this agent (the human approved it), or the token is wrong. If you are a new chat, call join_request with your name and the human will decide; otherwise stop working in this chat.`;
+    }
+    this.unlockedHash = this.identity.chatTokenHash;
+    if (this.role === 'unpaired' && this.hub) await this.authenticate();
+    return undefined;
+  }
+
   /** Runs one tool for this agent and returns the text the model sees. */
   /** `signal` aborts when the client cancels the call, e.g. the human stopped the chat. */
-  async handle(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ text: string; isError?: boolean }> {
+  async handle(name: string, args: Record<string, unknown>, signal?: AbortSignal, token?: string): Promise<{ text: string; isError?: boolean }> {
+    // Named mode: the human approved a newer chat for this agent while this call ran.
+    const stale = () => token !== undefined && hashToken(token) !== this.identity?.chatTokenHash;
     try {
-      if (this.fenced) throw new HubError('fenced', 'this session was replaced by a newer one with the same identity; stop working in this session');
+      if (this.fenced) throw this.fencedError();
       const hub = this.hub;
       if (!hub) throw new HubError('internal', 'the Round Table hub is unreachable; rt-agent keeps retrying. Try again shortly.');
-      if (this.role === 'unpaired' && !['join_request', 'join_confirm', 'rejoin'].includes(name)) {
+      const pairing = ['join_request', 'join_confirm'].includes(name);
+      if (this.role === 'unpaired' && !pairing && name !== 'rejoin') {
         throw new HubError('forbidden', this.identity ? 'not connected to the hub yet; try again shortly' : 'not joined yet: call join_request with your name first');
       }
-      const text = await this.dispatch(hub, name, args, signal);
-      const parts = [text, await this.statusLine(hub, name), await this.nextLine(hub)];
+      const text = await this.dispatch(hub, name, args, signal, stale);
+      const you = this.o.named && token && !pairing ? `${STATUS_PREFIX} you are ${this.slot}; pass token "${token}" on every call.` : '';
+      const parts = [text, await this.statusLine(hub, name), you, await this.nextLine(hub)];
       if (this.o.briefing && !this.briefed) {
-        parts.push(briefing(Math.round(this.o.waitMaxMs / 1000)));
+        parts.push(briefing(Math.round(this.o.waitMaxMs / 1000), this.o.named));
         this.briefed = true;
       }
       return { text: parts.filter(Boolean).join('\n\n') };
     } catch (error) {
       // Cancelled: nobody reads this result, so don't touch the hub again.
       if (signal?.aborted) return { text: `${STATUS_PREFIX} ${name} cancelled`, isError: true };
-      const e = error instanceof HubError ? error : new HubError('internal', errorText(error));
+      const e = this.fenced ? this.fencedError() : error instanceof HubError ? error : new HubError('internal', errorText(error));
       const reason = e.rejection ? `${e.rejection}: ${e.message}` : `${e.code}: ${e.message}`;
-      const next = this.hub && !this.fenced ? await this.nextLine(this.hub).catch(() => '') : '';
+      const next = this.hub && !this.fenced && !stale() ? await this.nextLine(this.hub).catch(() => '') : '';
       return { text: [`${STATUS_PREFIX} ${name} failed (${reason})`, next].filter(Boolean).join('\n\n'), isError: true };
     }
   }
 
-  private async dispatch(hub: HubClient, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+  private async dispatch(hub: HubClient, name: string, args: Record<string, unknown>, signal?: AbortSignal, stale?: () => boolean): Promise<string> {
     switch (name) {
       case 'join_request': {
+        if (this.identity && this.o.named) {
+          // A paired name in a chat without its token: only the human can let this chat continue as it.
+          this.pendingJoin = await this.withPairingClient((client) => requestJoin(client, {
+            name: String(args.name),
+            client: this.o.clientName,
+            tags: (args.tags as string[] | undefined) ?? [],
+            capabilities: (args.capabilities as string[] | undefined) ?? [],
+          }, { publicKey: this.identity!.publicKey, privateKey: this.identity!.privateKey }));
+          await this.o.keyStore.savePending(this.slot, this.pendingJoin);
+          return `"${String(args.name)}" is already paired with the Round Table, so this chat needs the human's approval to continue as that agent. Show the human this match phrase: ${this.pendingJoin.request.matchPhrase}
+They will check it in the Round Table app, click Allow, and paste an 8-character code into this chat. Then call join_confirm with that code and name "${String(args.name)}". If another chat is working as this agent, it will be stopped.`;
+        }
         if (this.identity) {
           // This name already has an identity: rejoin it; no code needed.
           if (this.role === 'unpaired') await this.authenticate();
@@ -184,20 +241,29 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
       }
       case 'join_confirm': {
         if (!this.pendingJoin) throw new HubError('invalid_input', 'call join_request first');
-        const identity = await confirmJoin(hub, this.pendingJoin, String(args.code), this.o.now());
+        const pending = this.pendingJoin;
+        const identity = await this.withPairingClient((client) => confirmJoin(client, pending, String(args.code), this.o.now()));
+        let token: string | undefined;
+        if (this.o.named) {
+          // This chat's proof that it is this agent; a previous chat's token stops working now.
+          token = `${this.slot}.${randomBytes(8).toString('base64url').replace(/[-_]/g, '').slice(0, 10).toLowerCase()}`;
+          identity.chatTokenHash = hashToken(token);
+          this.unlockedHash = identity.chatTokenHash;
+        }
         await this.o.keyStore.save(this.slot, identity);
         await this.o.keyStore.clearPending(identity.hubId, this.slot);
         this.identity = identity;
         this.pendingJoin = undefined;
-        await this.authenticate();
-        return PAIRED_WELCOME(this.role, this.session?.projectId ?? 'unknown');
+        if (this.role === 'unpaired') await this.authenticate();
+        const welcome = PAIRED_WELCOME(this.role, this.session?.projectId ?? 'unknown', this.o.named);
+        return token ? `${welcome}\n${TOKEN_NOTE(token)}` : welcome;
       }
       case 'rejoin':
         await this.authenticate();
         return `Rejoined as ${this.identity?.agentId} (${this.role}).`;
       case 'wait': {
         const timeoutMs = Math.min(typeof args.timeoutMs === 'number' ? args.timeoutMs : this.o.waitMaxMs, this.o.waitMaxMs);
-        const out = await this.fetch(hub, { ...args, timeoutMs }, signal);
+        const out = await this.fetch(hub, { ...args, timeoutMs }, signal, stale);
         return formatItems(out.items, out.more);
       }
       case 'activity':
@@ -218,7 +284,7 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
   }
 
   /** One wait round trip: acks what the model already has, records what it hands over now. */
-  private async fetch(hub: HubClient, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ items: WaitItem[]; more: number }> {
+  private async fetch(hub: HubClient, args: Record<string, unknown>, signal?: AbortSignal, stale?: () => boolean): Promise<{ items: WaitItem[]; more: number }> {
     // The chat was stopped while waiting: tell the hub at once, so the human sees the agent stopped.
     const onAbort = () => void hub.call('agent.stopped').catch(() => undefined);
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -228,6 +294,9 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
     } finally {
       signal?.removeEventListener('abort', onAbort);
     }
+    // Another chat took over this agent: these messages are its, not this chat's. Leave the
+    // handed set alone (it belongs to the new chat); the hub sends them again.
+    if (stale?.()) throw new HubError('fenced', 'another chat now works as this agent (the human approved it); stop working in this chat');
     if (signal?.aborted) {
       // Nobody will read this result: don't count its messages as delivered; the hub sends them again.
       this.handed = new Map();
@@ -271,9 +340,19 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
     return counts;
   }
 
+  private fencedError(): HubError {
+    return new HubError('fenced', this.o.named
+      ? 'another chat now works as this agent (the human approved it); stop working in this chat'
+      : 'this session was replaced by a newer one with the same identity; stop working in this session');
+  }
+
   private log(message: string): void {
     this.o.log(`[rt-agent ${this.slot}] ${message}`);
   }
+}
+
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
 }
 
 function zeroCounts(): InboxCounts {

@@ -56,6 +56,31 @@ test('the human pairs an agent through the app and they exchange messages', asyn
   await page.screenshot({ path: 'test-results/s1-project.png', fullPage: true });
 });
 
+test('a new chat asking to continue as a paired agent needs the human, and stays that agent', async ({ page }) => {
+  await page.goto(h.loginUrl());
+  const first = await h.agent();
+  const pending = await requestJoin(first, { name: 'Ada', client: 'scripted' });
+  const card = page.locator('article.request', { hasText: pending.request.matchPhrase });
+  await card.getByLabel('New project name').fill('Resume check');
+  await card.getByRole('button', { name: 'Phrase matches, allow' }).click();
+  const code = (await page.getByTestId('pairing-code').textContent())?.trim() ?? '';
+  const identity = await confirmJoin(first, pending, code, Date.now());
+  await page.getByRole('button', { name: 'Done, open project' }).click();
+  await page.locator('.nav-item', { hasText: 'Pairing' }).click();
+
+  // Another chat, same key (the IDE's shared rt-agent), asks to be Ada.
+  const second = await h.agent();
+  const again = await requestJoin(second, { name: 'Ada', client: 'scripted' }, { publicKey: identity.publicKey, privateKey: identity.privateKey });
+  const resume = page.locator('article.request', { hasText: again.request.matchPhrase });
+  await expect(resume.getByRole('note')).toContainText('A new chat asks to continue as Ada');
+  await expect(resume.getByLabel('Project', { exact: true })).toHaveCount(0);
+  await resume.getByRole('button', { name: 'Phrase matches, allow as Ada' }).click();
+  const code2 = (await page.getByTestId('pairing-code').textContent())?.trim() ?? '';
+  const resumed = await confirmJoin(second, again, code2, Date.now());
+  expect(resumed.agentId).toBe(identity.agentId);
+  await expect(page.locator('table.table tbody tr')).toHaveCount(1);
+});
+
 test('without the login link the app shows how to log in', async ({ page }) => {
   await page.goto(h.base);
   await expect(page.getByText('You are not logged in to this hub.')).toBeVisible();

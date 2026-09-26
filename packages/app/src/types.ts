@@ -22,6 +22,8 @@ export interface PairingRequest {
   projectId: string | null;
   codeExpiresAt: number | null;
   attempts: number;
+  /** A new chat asking to continue as this paired agent (ADR-0017). */
+  resumes: string | null;
 }
 
 export interface PairedAgent {

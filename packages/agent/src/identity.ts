@@ -12,6 +12,11 @@ export interface Identity {
   hubPublicKey: string;
   hubId: string;
   createdAt: number;
+  /**
+   * Named mode (ADR-0017): sha-256 of the token held by the chat the human approved for this agent.
+   * Only the hash is stored, so the token can't be read from disk.
+   */
+  chatTokenHash?: string;
 }
 
 /** `$RT_HOME`, defaulting to the XDG config dir. */

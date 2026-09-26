@@ -32,7 +32,7 @@ export function PairingView({ onOpenProject }: { onOpenProject: (projectId: stri
         {pending.length === 0 && <p className="empty">No agents are waiting. In an agent's chat, run the Round Table join prompt.</p>}
         <div className="cards">
           {pending.map((r) => (
-            <RequestCard key={r.requestId} request={r} projects={projects ?? []} onAllowed={(a) => setAllowed({ ...a, requestId: r.requestId, name: r.name })} />
+            <RequestCard key={r.requestId} request={r} projects={projects ?? []} agents={data?.agents ?? []} onAllowed={(a) => setAllowed({ ...a, requestId: r.requestId, name: r.name })} />
           ))}
         </div>
       </section>
@@ -65,18 +65,25 @@ export function PairingView({ onOpenProject }: { onOpenProject: (projectId: stri
   );
 }
 
-function RequestCard({ request, projects, onAllowed }: { request: PairingRequest; projects: ProjectSummary[]; onAllowed: (a: { code: string; expiresAt: number; projectId: string }) => void }) {
+function RequestCard({ request, projects, agents, onAllowed }: { request: PairingRequest; projects: ProjectSummary[]; agents: PairedAgent[]; onAllowed: (a: { code: string; expiresAt: number; projectId: string }) => void }) {
   const [target, setTarget] = useState<string>(projects[0]?.projectId ?? 'new');
   const [newName, setNewName] = useState('');
   const [allow, allowing, allowError] = useCommand<{ code: string; expiresAt: number; projectId: string }>('pairing.allow');
   const [deny] = useCommand('pairing.deny');
   const [block] = useCommand('pairing.block_origin');
-  const isNew = target === 'new';
+  const resumes = request.resumes === null ? undefined : agents.find((a) => a.agentId === request.resumes);
+  const isNew = !resumes && target === 'new';
   const id = useId();
 
   return (
     <article className="card request">
       <div className="phrase" aria-label="match phrase">{request.matchPhrase}</div>
+      {resumes && (
+        <p className="nudge urgent" role="note">
+          A new chat asks to continue as <strong>{resumes.name}</strong> (already paired, in {projects.find((p) => p.projectId === resumes.projectId)?.name ?? shortId(resumes.projectId)}).
+          Allow it only if you opened this chat for {resumes.name}. The chat working as {resumes.name} now will be stopped.
+        </p>
+      )}
       <dl className="facts">
         <dt>Name</dt><dd>{request.name}</dd>
         <dt>Client</dt><dd>{request.client}</dd>
@@ -85,13 +92,13 @@ function RequestCard({ request, projects, onAllowed }: { request: PairingRequest
         {request.tags.length > 0 && (<><dt>Tags</dt><dd>{request.tags.join(', ')}</dd></>)}
         <dt>Asked</dt><dd>{timeAgo(request.requestedAt)}</dd>
       </dl>
-      <div className="field">
+      {!resumes && <div className="field">
         <label htmlFor={`${id}-project`}>Project</label>
         <select id={`${id}-project`} value={target} onChange={(e) => setTarget(e.target.value)}>
           {projects.map((p) => <option key={p.projectId} value={p.projectId}>{p.name}</option>)}
           <option value="new">New project…</option>
         </select>
-      </div>
+      </div>}
       {isNew && (
         <div className="field">
           <label htmlFor={`${id}-name`}>New project name</label>
@@ -104,11 +111,11 @@ function RequestCard({ request, projects, onAllowed }: { request: PairingRequest
           className="primary"
           disabled={allowing || (isNew && newName.trim() === '')}
           onClick={async () => {
-            const out = await allow(isNew ? { requestId: request.requestId, newProjectName: newName.trim() } : { requestId: request.requestId, projectId: target });
+            const out = await allow(resumes ? { requestId: request.requestId } : isNew ? { requestId: request.requestId, newProjectName: newName.trim() } : { requestId: request.requestId, projectId: target });
             if (out) onAllowed(out);
           }}
         >
-          Phrase matches, allow
+          {resumes ? `Phrase matches, allow as ${resumes.name}` : 'Phrase matches, allow'}
         </button>
         <button onClick={() => deny({ requestId: request.requestId })}>Deny</button>
         <button className="danger" title="Deny and refuse future requests from this origin" onClick={() => block({ origin: request.origin })}>Block origin</button>
