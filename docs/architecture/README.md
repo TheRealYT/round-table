@@ -193,6 +193,8 @@ A pending `wait` resolves **immediately** on a `human` or `critical` row, after 
 
 **Inline delivery (as built in S1).** When the pushed counts show human or critical items, rt-agent runs a zero-timeout `wait` itself after the model's tool call and appends the items under `[Round Table] messages for you:`, so they count as handed over and are acked on the next call. The banner subtracts items already handed over but not yet acked.
 
+**Next steps (ADR-0015).** After pairing the Round Table, not the chat, drives the agent. `core/src/guidance.ts` computes each agent's next step from the board (reviews waiting on it, its own task's stage, a ready task to claim, proposals to commit for the leader, or wait). rt-agent appends `[Round Table] next: …` to every tool result, so the model keeps looping through tools until the human or the leader says stop. The hub also tracks each agent's last tool call in memory, and the app flags agents whose model stopped ("type continue").
+
 **Piggyback.** The hub pushes inbox counts to `rt-agent` over the transport whenever they change. `rt-agent` appends a one-line banner to **every** Round Table tool result (`[Round Table] inbox: 3 messages waiting (1 human, 2 critical). Read with wait.`), a factual line defined in the MCP server instructions (S0), and puts `human`/`control` items inline. This is how an agent that is busy working, and not waiting, still sees the human first.
 
 ### 4.5 Identity, sessions, liveness

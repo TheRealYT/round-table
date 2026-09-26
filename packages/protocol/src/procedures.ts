@@ -90,6 +90,16 @@ export const PROCEDURES = [
     output: z.object({ hubId: z.string(), hubPublicKey: z.string(), version: z.number().int() }),
   }),
   proc({
+    name: 'agent.next',
+    kind: 'query',
+    allow: ['worker', 'leader'],
+    stream: 'project',
+    mcp: false,
+    summary: 'rt-agent internal: the agent’s next step, computed from the board; attached to every tool result.',
+    input: z.object({}),
+    output: z.object({ tool: z.string(), step: z.string() }),
+  }),
+  proc({
     name: 'session.challenge',
     kind: 'command',
     allow: ['unpaired'],

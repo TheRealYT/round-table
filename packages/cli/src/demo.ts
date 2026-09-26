@@ -8,14 +8,6 @@ import { clientProfile, createAgentWorktree, installAgent, rtHome } from '@round
 
 const MAIN = fileURLToPath(new URL('./main.ts', import.meta.url));
 
-/** Role prompts that work well with the S2 feature set (the same ones e2e/real-claude-s2.ts uses). */
-export const ROLE_PROMPTS = {
-  leader: `You are the Round Table leader for this project. You coordinate only: never write code, review or test. Work the protocol: call wait repeatedly; when a worker proposes a task that serves the goal, inspect it (board_get) and board_commit it, or board_reject with a reason; answer questions briefly with send. Keep going until you receive a message that the task is done, then stop.`,
-  author: (reviewer: string) =>
-    `You are a worker on the Round Table. Steps: 1) board_view "me" to read the goal. 2) Propose one task that achieves it: board_propose section "tasks", op "add", data {title, criteria: [...]}. 3) Call wait until the plan is approved and the task is ready (board_read "tasks"), then claim it. 4) In this directory (your git worktree) create the branch claim gives you (git switch -c <branch>), make the change, run sh test.sh, and commit. 5) Open a change request (board_propose section "artifacts", op "open", data {kind: "change_request", taskId, branch}). 6) Ask ${reviewer} (find the agentId with board_read "roster") for a review AND a test of your change request with request. 7) Keep calling wait and handle feedback until a message says the task is done, then stop.`,
-  reviewer: `You are a worker on the Round Table, acting as reviewer and tester. Call wait repeatedly. When asked to review or test a change request: in this directory (your git worktree) run git checkout --detach <headSha from the request>, read the task's criteria (board_get the task), check the change, run sh test.sh, then respond to that request with your verdict for that exact headSha. Keep going until a message says the task is done, then stop.`,
-};
-
 function git(cwd: string, ...args: string[]): void {
   execFileSync('git', ['-C', cwd, '-c', 'user.name=Round Table demo', '-c', 'user.email=demo@round-table.invalid', '-c', 'commit.gpgsign=false', ...args], { stdio: 'ignore' });
 }
@@ -55,34 +47,25 @@ export function demo(args: string[]): void {
     `# Round Table demo (${profile.name})`,
     '',
     `Sample repository: ${repo} (greeting.txt says "hello"; the test is \`sh test.sh\`).`,
-    `Agent worktrees: ${slots.map((s) => join(dir, s)).join(', ')}.`,
+    `Agent folders (git worktrees): ${slots.map((s) => join(dir, s)).join(', ')}.`,
     '',
     '## Steps',
     '',
-    '1. Start the hub (keep it running): `node ' + MAIN + ' hub start` and open the login link it prints. Lost it? `node ' + MAIN + ' hub login`.',
-    `2. In one terminal per agent, start ${profile.name} in its folder and say "Join the Round Table as ${title(lead)}" (${title(author)}, ${title(reviewer)} in the others).`,
-    `   ${profile.id === 'codex' ? 'Codex: trust the folder when asked. ' : profile.id === 'gemini' ? 'Gemini CLI: trust the folder when asked. ' : ''}Approve the roundtable tools when the client asks.`,
-    '3. Each agent shows a match phrase. In the app, Pairing: check the phrase, allow it (first one into a new project, the rest into the same project), and paste the code into that agent\'s chat.',
-    `4. In the app, open the project: click "Make leader" on ${title(lead)}. Under Setup: set a goal, e.g. "Change greeting.txt so it reads exactly: hello there", attach the repository path ${repo}, and set the test command \`sh test.sh\`.`,
-    '5. Give each agent its role prompt (below).',
-    '6. When a proposed task appears under Tasks, click "Approve plan". Then watch the board and the feed: claim, change request, review and test, the hub\'s own test run, and the merge.',
-    `7. Check the result: \`git -C ${repo} log --oneline --graph main\` and \`git -C ${repo} show main:greeting.txt\`.`,
+    '1. Start the hub (keep it running): `node ' + MAIN + ' hub start`, and open the login link it prints. Lost it? `node ' + MAIN + ' hub login`.',
+    `2. Set the project up first, so agents have work the moment they join. In the app, add a project (sidebar). Under Setup, set the goal (e.g. "Change greeting.txt so it reads exactly: hello there"), attach the repository ${repo}, and set the test command \`sh test.sh\`.`,
+    `3. In one terminal per agent, start ${profile.name} in its folder and say "Join the Round Table as ${title(lead)}" (${title(author)}, ${title(reviewer)} in the others).`,
+    `   ${profile.id === 'codex' ? 'Codex: trust the folder when asked. ' : profile.id === 'gemini' ? 'Gemini CLI: trust the folder when asked. ' : ''}Approve the roundtable tools if the client asks.`,
+    '4. Each agent shows a match phrase. In the app under Pairing, check it, allow it into your project, and paste the code into that agent\'s chat.',
+    `5. Click "Make leader" on ${title(lead)}. That's all the chat is for: from here the Round Table drives each agent. Every tool result ends with "[Round Table] next", and the agents keep working through their tools without prompts.`,
+    '6. When a proposed task appears under Tasks, click "Approve plan". Watch the board and the feed: claim, change request, review and test by another agent, the hub\'s own test run, and the merge.',
+    '7. When it\'s done, post "The goal is done, please stop" from the composer; the agents stop.',
+    `8. Check the result: \`git -C ${repo} log --oneline --graph main\`.`,
     '',
-    '## Role prompts',
+    '## If an agent stops',
     '',
-    `### ${title(lead)} (leader)`,
+    'An MCP server can\'t wake a model whose turn has ended. If an agent card in the app says "Idle", type "continue" in that agent\'s chat. Some IDEs also pause after a number of tool calls in one turn; "continue" resumes it the same way.',
     '',
-    ROLE_PROMPTS.leader,
-    '',
-    `### ${title(author)} (worker, author)`,
-    '',
-    ROLE_PROMPTS.author(title(reviewer)),
-    '',
-    `### ${title(reviewer)} (worker, reviewer and tester)`,
-    '',
-    ROLE_PROMPTS.reviewer,
-    '',
-    'Try things too: post an instruction from the app\'s composer while they work, kill an agent\'s session and restart it (it rejoins by itself), or make the change fail the test and see the hub refuse the merge.',
+    'Try things too: post an instruction from the composer while they work, restart an agent (it rejoins by itself), or ask the author to make the test fail and watch the hub refuse the merge.',
     '',
     `Identities for this demo live in ${rtHome()}/identities. To start over: stop the hub, delete ${dir} and ${rtHome()}.`,
   ];

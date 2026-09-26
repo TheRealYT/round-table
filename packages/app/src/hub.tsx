@@ -53,7 +53,7 @@ export function useHub(): HubClient | undefined {
  * Runs a query procedure and re-runs it whenever the hub reports a change (architecture §7:
  * the app refetches; it never replays events itself).
  */
-export function useQuery<T>(proc: string, input: Record<string, unknown> | undefined): { data: T | undefined; error: string | undefined } {
+export function useQuery<T>(proc: string, input: Record<string, unknown> | undefined, options: { pollMs?: number } = {}): { data: T | undefined; error: string | undefined } {
   const client = useHub();
   const [data, setData] = useState<T>();
   const [error, setError] = useState<string>();
@@ -75,11 +75,17 @@ export function useQuery<T>(proc: string, input: Record<string, unknown> | undef
     setData(undefined);
     run();
     if (!client) return;
-    return client.on('changed', () => {
+    const off = client.on('changed', () => {
       clearTimeout(pending.current);
       pending.current = setTimeout(run, 80);
     });
-  }, [client, run]);
+    // Some state changes without events (e.g. whether an agent's model is still calling tools).
+    const poll = options.pollMs ? setInterval(run, options.pollMs) : undefined;
+    return () => {
+      off();
+      if (poll) clearInterval(poll);
+    };
+  }, [client, run, options.pollMs]);
 
   return { data, error };
 }

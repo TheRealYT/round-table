@@ -16,7 +16,7 @@ import { inboxBanner, STATUS_PREFIX } from './banner.ts';
 import { formatItems, formatResult, type WaitItem } from './format.ts';
 import { HubClient, HubError } from '@round-table/protocol';
 import type { Identity } from './identity.ts';
-import { briefing, PAIRED_WELCOME, serverInstructions, TOOL_DESCRIPTIONS } from './instructions.ts';
+import { briefing, LOOP_REMINDER, PAIRED_WELCOME, roleBrief, serverInstructions, TOOL_DESCRIPTIONS } from './instructions.ts';
 import type { KeyStore, PendingJoin } from './keystore.ts';
 
 export interface BridgeOptions {
@@ -83,6 +83,10 @@ export class AgentBridge {
   private handed = new Map<number, Priority>();
   private lastActivityAt: number;
   private briefed = false;
+  /** Set when the role changes; the next result explains the new role. */
+  private roleChanged = false;
+  /** The last messages handed to the model included one from the human. */
+  private handedHuman = false;
   /** Last boardVersion relayed to the model (filled into proposals as baseSeq). */
   private boardVersion: number | undefined;
   private reconnectDelay: number;
@@ -110,7 +114,7 @@ export class AgentBridge {
           role: 'user' as const,
           content: {
             type: 'text' as const,
-            text: 'Join the Round Table. If you are not paired yet, call join_request with a short name for yourself, show me the match phrase, and wait for me to paste the code. If you are already paired, call wait and follow the Round Table protocol.',
+            text: 'Join the Round Table. If you are not paired yet, call join_request with a short name for yourself, show me the match phrase, and wait for me to paste the code. After that, or if you are already paired, the Round Table drives this session: follow the "[Round Table] next" line on every result and keep working through its tools.',
           },
         }],
       }),
@@ -146,6 +150,7 @@ export class AgentBridge {
     });
     client.on('role', (data) => {
       this.role = (data as { role: Role }).role;
+      this.roleChanged = true;
       this.applyRole();
     });
     client.on('fenced', () => {
@@ -225,7 +230,7 @@ export class AgentBridge {
       }
       const text = await this.dispatch(hub, name, args);
       const status = await this.statusLine(hub, name);
-      const parts = [text, status];
+      const parts = [text, status, await this.nextLine(hub)];
       if (this.options.briefing && !this.briefed) {
         parts.push(briefing(Math.round(this.options.waitMaxMs / 1000)));
         this.briefed = true;
@@ -234,7 +239,8 @@ export class AgentBridge {
     } catch (error) {
       const e = error instanceof HubError ? error : new HubError('internal', errorText(error));
       const reason = e.rejection ? `${e.rejection}: ${e.message}` : `${e.code}: ${e.message}`;
-      return { content: [{ type: 'text' as const, text: `${STATUS_PREFIX} ${name} failed (${reason})` }], isError: true };
+      const next = this.hub && !this.fenced ? await this.nextLine(this.hub).catch(() => '') : '';
+      return { content: [{ type: 'text' as const, text: [`${STATUS_PREFIX} ${name} failed (${reason})`, next].filter(Boolean).join('\n\n') }], isError: true };
     }
   }
 
@@ -293,6 +299,7 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
   private async fetch(hub: HubClient, args: Record<string, unknown>): Promise<{ items: WaitItem[]; more: number }> {
     const out = await hub.call<{ items: WaitItem[]; more: number }>('wait', { ...args, ack: [...this.handed.keys()] });
     this.handed = new Map(out.items.map((i) => [i.deliveryId, i.priority as Priority]));
+    this.handedHuman = out.items.some((i) => i.role === 'human');
     return out;
   }
 
@@ -308,6 +315,23 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
       if (out.items.length > 0) return `${STATUS_PREFIX} messages for you:\n${formatItems(out.items, out.more)}`;
     }
     return inboxBanner(this.pendingCounts(), this.options.now() - this.lastActivityAt > ACTIVITY_DUE_MS);
+  }
+
+  /**
+   * The Round Table drives the session (spec D3): every result ends with the next step the hub
+   * computes from the board, so the model keeps looping through tools instead of stopping to chat.
+   */
+  private async nextLine(hub: HubClient): Promise<string> {
+    if (this.role === 'unpaired' || this.fenced) return '';
+    const lines: string[] = [];
+    if (this.roleChanged) {
+      lines.push(`${STATUS_PREFIX} your role changed: you are now the ${this.role}. ${roleBrief(this.role)}`);
+      this.roleChanged = false;
+    }
+    const next = await hub.call<{ tool: string; step: string }>('agent.next').catch(() => undefined);
+    const human = this.handedHuman ? 'First do what the human asked above; it outranks the board. Then: ' : '';
+    lines.push(`${STATUS_PREFIX} next: ${human}${next?.step ?? 'call wait.'}\n${LOOP_REMINDER}`);
+    return lines.join('\n');
   }
 
   /** Hub counts minus what the model already holds (acked on its next wait). */

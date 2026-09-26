@@ -70,7 +70,7 @@ describe('S1 rt-agent over MCP', () => {
     expect(busy).toContain('[human] human from human');
     expect(busy).toContain('Stop editing api.ts');
     // Handed over once: the next wait acks it and does not repeat it.
-    expect(await b.call('wait', { timeoutMs: 10 })).toBe('No new messages.');
+    expect(await b.call('wait', { timeoutMs: 10 })).toMatch(/^No new messages\.\n\n\[Round Table\] next: /);
   });
 
   it('reports lower-priority mail as a factual count, and nothing when the inbox is empty', async () => {
@@ -79,7 +79,7 @@ describe('S1 rt-agent over MCP', () => {
     const b = await start({ slot: 'b' });
     const { projectId } = await pairViaMcp(a, 'A', { newProjectName: 'P' });
     await pairViaMcp(b, 'B', { projectId });
-    expect(await b.call('activity', { doing: 'x', next: 'y' })).not.toContain('[Round Table]');
+    expect(await b.call('activity', { doing: 'x', next: 'y' })).not.toContain('[Round Table] inbox');
     await a.call('send', { to: 'all', type: 'chat', body: 'fyi' });
     await settle();
     expect(await b.call('activity', { doing: 'x', next: 'y' })).toContain('[Round Table] inbox: 1 message waiting (1 normal). Read with wait.');

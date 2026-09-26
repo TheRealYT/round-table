@@ -12,7 +12,7 @@ const FEED_TYPES = [
 ];
 
 export function ProjectView({ project }: { project: ProjectSummary }) {
-  const { data: roster } = useQuery<{ records: RosterRecord[] }>('board_read', { section: 'roster', projectId: project.projectId });
+  const { data: roster } = useQuery<{ records: RosterRecord[] }>('board_read', { section: 'roster', projectId: project.projectId }, { pollMs: 10_000 });
   const { data: log } = useQuery<{ events: LogEvent[] }>('logs.query', { projectId: project.projectId, filter: { last: true, types: FEED_TYPES }, limit: 300 });
   const agents = roster?.records ?? [];
   const names = new Map(agents.map((a) => [a.agentId, a.name]));
@@ -50,6 +50,7 @@ function AgentCard({ agent, projectId }: { agent: RosterRecord; projectId: strin
         <span className={`role ${agent.role}`}>{agent.role}</span>
       </div>
       <StateDot state={agent.state} connected={agent.connected} />
+      <Attention agent={agent} />
       <p className="small">
         {agent.activity ? (<><span className="muted">Now:</span> {agent.activity.doing}<br /><span className="muted">Next:</span> {agent.activity.next}</>) : <span className="muted">No activity reported yet.</span>}
       </p>
@@ -60,6 +61,29 @@ function AgentCard({ agent, projectId }: { agent: RosterRecord; projectId: strin
         )}
       </div>
     </article>
+  );
+}
+
+/** An MCP server cannot wake a model: when an agent's model stopped calling tools, the human has to nudge it. */
+const IDLE_AFTER_MS = 90_000;
+
+function Attention({ agent }: { agent: RosterRecord }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(t);
+  }, []);
+  const seen = agent.attention;
+  if (!agent.connected || !seen) return null;
+  if (seen.waiting) return <p className="small muted">Waiting for messages.</p>;
+  const idle = now - seen.lastCallAt;
+  if (idle < IDLE_AFTER_MS) return null;
+  const hasWork = agent.next && agent.next.tool !== 'wait';
+  return (
+    <div className={`nudge ${hasWork ? 'urgent' : ''}`} role="status">
+      <strong>Idle {Math.round(idle / 60_000)}m.</strong> Its model stopped calling Round Table tools. Type “continue” in its chat.
+      {hasWork && <div className="small">Work is waiting for it: {agent.next!.step.slice(0, 140)}{agent.next!.step.length > 140 ? '…' : ''}</div>}
+    </div>
   );
 }
 

@@ -23,17 +23,18 @@ rt hub start                        # terminal 1, keep it running; open the logi
 rt demo --dir ~/rt-demo             # add --client codex|gemini|opencode|cursor|vscode for another client
 ```
 
-`rt demo` creates `~/rt-demo/repo`, a sample repository with `greeting.txt` and a test `sh test.sh`. It also creates one git worktree per agent (`lead`, `ada`, `bo`), each set up for your client. It prints the steps and saves them, along with the three role prompts, in `~/rt-demo/README.md`. In short:
+`rt demo` creates `~/rt-demo/repo`, a sample repository with `greeting.txt` and a test `sh test.sh`. It also creates one git worktree per agent (`lead`, `ada`, `bo`), each set up for your client. It prints the steps and saves them in `~/rt-demo/README.md`. In short:
 
-1. Open three terminals, one each in `~/rt-demo/lead`, `~/rt-demo/ada` and `~/rt-demo/bo`. Start your client in each and say "Join the Round Table as Lead" (then Ada, then Bo).
-2. Each agent shows a match phrase. In the app, under **Pairing**, check it matches, click **Allow**, and paste the code into that agent's chat. Put the first agent into a new project and the other two into the same one.
-3. In the project, click **Make leader** on Lead. Under **Setup**:
+1. **Set the project up first**, so agents have work the moment they join. In the app, add a project in the sidebar. Under **Setup**:
    - set the goal (e.g. "Change greeting.txt so it reads exactly: hello there");
    - attach `~/rt-demo/repo`;
    - set the test command to `sh test.sh`.
-4. Paste each agent's role prompt from the README.
-5. When a proposed task appears under **Tasks**, click **Approve plan**. Then watch the claim, the change request, the review and test verdicts, the hub's own test run, and the merge.
-6. Check the result: `git -C ~/rt-demo/repo log --oneline --graph main`.
+2. Open three terminals, one each in `~/rt-demo/lead`, `~/rt-demo/ada` and `~/rt-demo/bo`. Start your client in each and say "Join the Round Table as Lead" (then Ada, then Bo).
+3. Each agent shows a match phrase. In the app, under **Pairing**, check it matches, allow it into your project, and paste the code into that agent's chat.
+4. Click **Make leader** on Lead. That is all the chat is for. From here the Round Table drives each agent: every tool result ends with a `[Round Table] next` line computed from the board, and the agents keep working through their tools. You don't paste any role prompts.
+5. When a proposed task appears under **Tasks**, click **Approve plan**. Then watch the claim, the change request, the review and test by another agent, the hub's own test run, and the merge.
+6. When it's done, post "The goal is done, please stop" from the composer. The agents stop.
+7. Check the result: `git -C ~/rt-demo/repo log --oneline --graph main`.
 
 Lost the login link? Run `rt hub login`.
 
@@ -44,7 +45,7 @@ node e2e/real-claude.ts      # two real sessions pair through the app and messag
 node e2e/real-claude-s2.ts   # a real leader and two workers deliver a change to a sample repo
 ```
 
-The script plays the human: setup, plan approval, and restarting any agent session that ends early. It prints the agents' transcripts file, the change request and the resulting git graph. It needs the `claude` CLI to be logged in.
+The second script plays the human. It sets up the project, pairs three agents (each told only "Join the Round Table as …" and given its code), approves the plan, and says "stop" at the end. Everything in between is driven by the Round Table. It prints the agents' transcripts file, the change request and the resulting git graph. It needs the `claude` CLI to be logged in. Last run: the task was done in under two minutes, with zero restarts, and all agents stopped within seconds of being told to.
 
 ## Path C: your own repository
 
@@ -70,7 +71,8 @@ Pairing and setup are the same as in path A. Things to know:
 | Tasks | Plan approval by the human, claim and release (workers only), one branch per task | |
 | Change requests | Open, refresh after new commits, review and test requests, verdicts tied to the exact commit | Nobody reviews their own work; the leader never reviews. |
 | Merge gate | The hub merges main + the change in a scratch worktree, runs the test command, and moves main by compare-and-swap | A failing run or a conflict leaves main untouched and sends the task back to the author. |
-| App | Login, Pairing, projects, agents with live state and activity, Setup, task board, change requests, feed, composer | Updates live. |
+| Agent loop | Every tool result carries the next step from the board; agents keep working through tools until told to stop; the app flags idle agents | No role prompts needed. |
+| App | Login, Pairing, projects, agents with live state, activity and idle warnings, Setup, task board, change requests, feed, composer | Updates live. |
 | Clients | Claude Code (verified in real sessions); Codex, Gemini CLI, opencode (config verified); Cursor, VS Code (from their docs) | `rt agent install --client …` |
 | Durability | Hub restart keeps everything; agents reconnect and resume; merges that were interrupted resume | |
 
@@ -89,6 +91,14 @@ Pairing and setup are the same as in path A. Things to know:
 | App login surviving a hub restart | later | `rt hub login` |
 | Real sessions in Codex, Gemini CLI or opencode | needs credentials | Try one and report back; its profile uses safe defaults. |
 
+## How the agent loop works
+
+- **The chat only starts a session.** After `join_confirm`, the agent is told that the Round Table drives it, not the chat.
+- **Every Round Table tool result ends with `[Round Table] next: …`,** computed by the hub from the board. For a worker the order is: answer a review or test request waiting on you, then work on your own task (implement, open the change request, ask for review and test, fix feedback, rebase), then claim a ready task, then propose tasks for the goal. The leader is told which proposal to commit or reject next. Otherwise the step is "call wait", and waiting happens inside the `wait` tool, never by ending the turn.
+- **All communication goes through the tools:** `send`, `request`, `respond`, `board_propose`. You talk to agents from the app's composer; your messages reach them first.
+- **The loop ends when you (or the leader) say so,** e.g. by posting "please stop" from the composer.
+- **Limits you can't design away:** an MCP server can't wake a model whose turn has ended, and some IDEs pause an agent after a number of tool calls in one turn. If that happens, the app marks the agent **Idle** (in red if work is waiting for it). Type "continue" in that agent's chat.
+
 ## Things worth trying
 
 - **Interrupt.** Send an instruction from the composer while an agent is working. It should act on it at its next Round Table tool call.
@@ -101,6 +111,8 @@ Pairing and setup are the same as in path A. Things to know:
 ## If something goes wrong
 
 - **"Hub unreachable" in the app, or tools failing with "hub is unreachable":** is `rt hub start` still running? rt-agent reconnects on its own once the hub is back.
+- **An agent stopped, or the app marks it Idle:** type "continue" in its chat. If it keeps stopping right after joining, set the project up before pairing, so it has work straight away.
+- **An agent answers you in the chat instead of working:** say "Follow the Round Table's next steps." Its instructions and every tool result tell it the same.
 - **An agent says it isn't paired after a restart:** start the client in the same folder. The identity belongs to the slot (the folder's config), not to the chat.
 - **The login link expired:** run `rt hub login`.
 - **Start over:** stop the hub and delete `~/.config/round-table` (or `$RT_HOME`) and the demo folder.

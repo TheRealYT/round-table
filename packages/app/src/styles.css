@@ -153,6 +153,8 @@ h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacin
 .setup-item p { margin: 0; }
 .setup-item button { align-self: flex-start; }
 .warning { color: var(--warn); }
+.nudge { font-size: 12px; border-left: 3px solid var(--warn); padding: var(--space-1) var(--space-2); background: var(--surface-2); border-radius: 4px; }
+.nudge.urgent { border-left-color: var(--danger); }
 .kanban { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(170px, 1fr); gap: var(--space-3); overflow-x: auto; padding-bottom: var(--space-2); }
 .column { background: var(--surface-2); border-radius: var(--radius); padding: var(--space-2); display: flex; flex-direction: column; gap: var(--space-2); }
 .task { padding: var(--space-2) var(--space-3); }

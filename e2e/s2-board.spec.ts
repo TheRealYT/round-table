@@ -72,3 +72,24 @@ test('the human sets up the board in the app, approves the plan, and watches a t
   expect(repo.fileOnMain('greeting.txt')).toBe('hello there');
   await page.screenshot({ path: 'test-results/s2-board.png', fullPage: true });
 });
+
+test('the app flags an agent whose model stopped calling tools, louder when work waits for it', async ({ page }) => {
+  const human = await h.human();
+  const lead = await pair(human, 'Lead', { newProjectName: 'Idle check' });
+  const a = await pair(human, 'Ada', { projectId: lead.projectId });
+  await human.call('leader.assign', { projectId: lead.projectId, agentId: lead.agentId });
+  await human.call('goal.set', { projectId: lead.projectId, goal: { objective: 'Anything' } });
+  await a.client.call('agent.next');
+
+  await page.clock.install();
+  await page.goto(h.loginUrl());
+  await page.locator('.nav-item', { hasText: 'Idle check' }).click();
+  const card = page.locator('article.agent', { hasText: 'Ada' });
+  await expect(card.getByText('online')).toBeVisible();
+  await expect(card.locator('.nudge')).toHaveCount(0);
+
+  // Two minutes without a tool call: Ada's next step is real work (propose tasks for the goal).
+  await page.clock.fastForward('02:00');
+  await expect(card.locator('.nudge.urgent')).toContainText('Type “continue” in its chat');
+  await expect(card.locator('.nudge')).toContainText('Work is waiting for it');
+});

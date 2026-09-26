@@ -1,4 +1,4 @@
-import type { ChangeRequestRecord, EntryRecord, Model, ProjectRecord, RosterEntry, TaskRecord } from '@round-table/core';
+import { nextStep, type ChangeRequestRecord, type EntryRecord, type Model, type ProjectRecord, type RosterEntry, type TaskRecord } from '@round-table/core';
 import type { AgentId } from '@round-table/protocol';
 import { RpcError } from './session.ts';
 
@@ -60,6 +60,7 @@ export function boardView(model: Model, project: ProjectRecord, view: string, ag
     const me = project.roster[agentId];
     return {
       ...base,
+      next: nextStep(model, project.projectId, agentId),
       you: me ? { agentId, name: me.name, role: me.role } : { agentId },
       myTasks: tasks.filter((t) => t.owner === agentId).map((t) => taskView(project, t)),
       requestsToMe: Object.values(project.requests).filter((r) => r.to === agentId && r.status === 'open'),

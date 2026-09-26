@@ -15,7 +15,7 @@ import {
   joinConfirmMessage,
   verifyMessage,
 } from '@round-table/protocol/crypto';
-import { INTERNAL_COMMANDS, type ProjectRecord } from '@round-table/core';
+import { INTERNAL_COMMANDS, nextStep, type ProjectRecord } from '@round-table/core';
 import { boardGet, boardRead, boardView } from './board-queries.ts';
 import type { HubInternals } from './internals.ts';
 import { ackDeliveries, pendingDeliveries } from './projectors/deliveries.ts';
@@ -32,6 +32,11 @@ export class Router {
   private readonly hub: HubInternals;
   private readonly queries: Record<string, Handler>;
   private readonly commands: Record<string, Handler>;
+  /**
+   * When each agent last called a tool, and whether it is inside wait. Operational state, not
+   * events: it shows the human which agents' models stopped (an MCP server cannot wake a model).
+   */
+  private readonly attention = new Map<string, { lastCallAt: number; waiting: boolean }>();
 
   constructor(hub: HubInternals) {
     this.hub = hub;
@@ -53,8 +58,20 @@ export class Router {
           return { ...a, role: entry?.role ?? null, state: entry?.state ?? null, connected: entry?.connected ?? false };
         }),
       }),
-      board_read: (session, input: { section: string; projectId?: string; filter?: Record<string, unknown>; fields?: string[]; limit: number }) =>
-        boardRead(this.project(session, input.projectId), input),
+      board_read: (session, input: { section: string; projectId?: string; filter?: Record<string, unknown>; fields?: string[]; limit: number }) => {
+        const project = this.project(session, input.projectId);
+        const out = boardRead(project, input);
+        if (input.section !== 'roster' || session.principal.kind !== 'human') return out;
+        // For the human: is each agent's model still calling tools, and does work wait for it? (ADR-0002 attention)
+        return {
+          ...out,
+          records: out.records.map((r) => {
+            const id = r.agentId as AgentId;
+            const seen = this.attention.get(id);
+            return { ...r, attention: seen ?? null, next: project.roster[id] ? nextStep(hub.model, project.projectId, id) : null };
+          }),
+        };
+      },
       board_view: (session, input: { view: string; projectId?: string }) =>
         boardView(hub.model, this.project(session, input.projectId), input.view, agentOf(session)?.agentId as AgentId | undefined),
       board_get: (session, input: { id: string; projectId?: string }) => boardGet(this.project(session, input.projectId), input.id),
@@ -72,6 +89,10 @@ export class Router {
         return { events: types ? rows.filter((r: EventRow) => types.has(r.type)) : rows };
       },
       wait: (session, input: { timeoutMs?: number; ack: number[] }) => this.wait(session, input),
+      'agent.next': (session) => {
+        const agent = agentOf(session)!;
+        return nextStep(hub.model, agent.projectId as never, agent.agentId as AgentId);
+      },
     };
     this.commands = {
       join_request: (session, input: { publicKey: string }) => {
@@ -141,6 +162,7 @@ export class Router {
     if (agent && input.projectId !== undefined && input.projectId !== agent.projectId) {
       throw new RpcError('forbidden', 'agents can only act in their own project');
     }
+    if (agent) this.attention.set(agent.agentId, { lastCallAt: this.hub.clock.now(), waiting: name === 'wait' });
     const special = def.kind === 'query' ? this.queries[name] : this.commands[name];
     if (special) return special(session, input);
     if (def.kind === 'command' && !INTERNAL_COMMANDS.has(name)) return this.dispatch(session, name, input);
@@ -182,7 +204,11 @@ export class Router {
     let result = pendingDeliveries(store.reader, agent.agentId, config.waitMaxChars);
     if (result.items.length === 0) {
       const timeout = Math.min(input.timeoutMs ?? config.waitMaxMs, config.waitMaxMs);
-      await waiters.wait(agent.agentId, timeout);
+      try {
+        await waiters.wait(agent.agentId, timeout);
+      } finally {
+        this.attention.set(agent.agentId, { lastCallAt: clock.now(), waiting: false });
+      }
       if (session.fenced) throw new RpcError('fenced', 'this session was replaced by a newer one');
       result = pendingDeliveries(store.reader, agent.agentId, config.waitMaxChars);
     }
