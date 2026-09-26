@@ -24,6 +24,7 @@ describe('rt agent install', () => {
     const settings = JSON.parse(read('.claude', 'settings.local.json'));
     expect(settings.env).toEqual({ FOO: '1', MCP_TOOL_TIMEOUT: '300000' });
     expect(settings.enabledMcpjsonServers).toEqual(['other', 'roundtable']);
+    expect(settings.permissions).toEqual({ allow: ['mcp__roundtable'] });
   });
 
   it('codex: writes a project .codex/config.toml table with a raised tool timeout, replacing only its own table', () => {

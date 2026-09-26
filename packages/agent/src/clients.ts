@@ -58,6 +58,11 @@ export const CLIENTS: Record<ClientId, ClientProfile> = {
         ...s,
         env: { ...(s.env as object), MCP_TOOL_TIMEOUT: String(RAISED_TIMEOUT_MS) },
         enabledMcpjsonServers: [...new Set([...((s.enabledMcpjsonServers as string[] | undefined) ?? []), 'roundtable'])],
+        // The human installed rt-agent on purpose; don't prompt for every Round Table tool call.
+        permissions: {
+          ...(s.permissions as object),
+          allow: [...new Set([...(((s.permissions as { allow?: string[] } | undefined)?.allow) ?? []), 'mcp__roundtable'])],
+        },
       }));
       return { files: [mcpPath, settingsPath], notes: [`cd ${dir} && claude, then run /mcp__roundtable__join or say "join the Round Table".`] };
     },
