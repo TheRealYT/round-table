@@ -18,10 +18,11 @@ const ALLOWED: Record<string, readonly string[]> = {
 
 // Bare imports allowed in core besides workspace packages: schema library only, no IO.
 const CORE_EXTERNAL = new Set(['zod']);
-// Files in protocol that must stay browser-safe (everything except the ws transport).
-const PROTOCOL_NODE_ONLY = new Set(['src/ws.ts']);
-// Packages that run on Node and may use the WebSocket transport.
-const WS_USERS = new Set(['hub', 'agent', 'cli', 'testkit']);
+// Files in protocol that are Node-only; everything else must stay browser-safe.
+const PROTOCOL_NODE_ONLY = new Set(['src/ws.ts', 'src/crypto.ts']);
+const NODE_SUBPATHS = new Set(['@round-table/protocol/ws', '@round-table/protocol/crypto']);
+// Packages that run on Node and may use the Node-only protocol subpaths.
+const NODE_USERS = new Set(['hub', 'agent', 'cli', 'testkit']);
 
 const IMPORT = /(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]/g;
 
@@ -56,11 +57,11 @@ for (const pkg of Object.keys(ALLOWED)) {
       if (spec.startsWith('@round-table/')) {
         const target = spec.slice('@round-table/'.length).split('/')[0]!;
         if (!ALLOWED[pkg]!.includes(target)) problems.push(`${where} imports ${spec}`);
-        if (spec === '@round-table/protocol/ws' && !WS_USERS.has(pkg)) problems.push(`${where} imports the Node-only ws transport`);
+        if (NODE_SUBPATHS.has(spec) && !NODE_USERS.has(pkg)) problems.push(`${where} imports Node-only ${spec}`);
       } else if (pkg === 'core' && !spec.startsWith('.') && !CORE_EXTERNAL.has(spec)) {
         problems.push(`${where} imports ${spec} (core must stay pure)`);
       } else if (pkg === 'protocol' && !PROTOCOL_NODE_ONLY.has(rel) && (spec.startsWith('node:') || spec === 'ws')) {
-        problems.push(`${where} imports ${spec} (protocol must stay browser-safe outside src/ws.ts)`);
+        problems.push(`${where} imports ${spec} (protocol must stay browser-safe outside its Node-only subpaths)`);
       }
     }
     if (pkg === 'core' && /\bDate\.now\s*\(|\bnew Date\s*\(\s*\)|\bMath\.random\s*\(/.test(text)) {

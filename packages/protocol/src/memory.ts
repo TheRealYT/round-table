@@ -67,11 +67,12 @@ export class MemoryNetwork implements TransportConnector, TransportListener {
     this.remoteAddress = remoteAddress;
   }
 
-  async connect(endpoint: ConnectionInfo['endpoint']): Promise<Transport> {
+  /** `extra` stands in for what a socket would carry (e.g. the human's login cookie). */
+  async connect(endpoint: ConnectionInfo['endpoint'], extra: Partial<Omit<ConnectionInfo, 'endpoint'>> = {}): Promise<Transport> {
     const [client, server] = createMemoryPair();
     this.open.add(server);
     server.onClose(() => this.open.delete(server));
-    this.connections.emit({ transport: server, info: { endpoint, remoteAddress: this.remoteAddress } });
+    this.connections.emit({ transport: server, info: { remoteAddress: this.remoteAddress, ...extra, endpoint } });
     return client;
   }
 

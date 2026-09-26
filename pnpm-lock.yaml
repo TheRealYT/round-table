@@ -72,6 +72,9 @@ importers:
       '@round-table/protocol':
         specifier: workspace:*
         version: link:../protocol
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
   packages/protocol:
     dependencies:
@@ -88,9 +91,15 @@ importers:
 
   packages/testkit:
     dependencies:
+      '@round-table/agent':
+        specifier: workspace:*
+        version: link:../agent
       '@round-table/core':
         specifier: workspace:*
         version: link:../core
+      '@round-table/hub':
+        specifier: workspace:*
+        version: link:../hub
       '@round-table/protocol':
         specifier: workspace:*
         version: link:../protocol

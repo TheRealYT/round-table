@@ -43,7 +43,7 @@ describe('procedure catalog', () => {
 
   it('never exposes human procedures to agents or over MCP', () => {
     for (const p of PROCEDURES.filter((p) => (p.allow as readonly string[]).includes('human') && !SPEC_AGENT_TOOLS.includes(p.name))) {
-      if (SPEC_LEADER_TOOLS.includes(p.name) || p.name === 'change_request.get') continue;
+      if (SPEC_LEADER_TOOLS.includes(p.name) || ['change_request.get', 'hub.info'].includes(p.name)) continue;
       expect(p.mcp, p.name).toBe(false);
       expect(allows(p.name, 'worker') || allows(p.name, 'leader'), p.name).toBe(false);
     }

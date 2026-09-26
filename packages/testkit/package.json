@@ -10,7 +10,9 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@round-table/agent": "workspace:*",
     "@round-table/core": "workspace:*",
+    "@round-table/hub": "workspace:*",
     "@round-table/protocol": "workspace:*"
   },
   "peerDependencies": {

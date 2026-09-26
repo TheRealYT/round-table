@@ -80,6 +80,16 @@ export const PROCEDURES = [
     output: pending,
   }),
   proc({
+    name: 'hub.info',
+    kind: 'query',
+    allow: ['unpaired', 'worker', 'leader', 'human'],
+    stream: 'system',
+    mcp: false,
+    summary: 'Hub id, public key and protocol version. rt-agent reads it first to find its identity slot.',
+    input: z.object({}),
+    output: z.object({ hubId: z.string(), hubPublicKey: z.string(), version: z.number().int() }),
+  }),
+  proc({
     name: 'session.challenge',
     kind: 'command',
     allow: ['unpaired'],
@@ -473,6 +483,8 @@ export const PROCEDURES = [
 
   // ── Human app only (never MCP) ──────────────────────────────────────────────────────────
   proc({ name: 'project.create', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Create a project: blank, from a template, or copying rules and roles.', input: z.object({ name: z.string().min(1), copyFrom: ProjectId.optional() }), output: z.object({ projectId: ProjectId }) }),
+  proc({ name: 'project.list', kind: 'query', allow: ['human'], stream: 'system', mcp: false, summary: 'All projects with status, for the sidebar.', input: z.object({}), output: pending }),
+  proc({ name: 'pairing.list', kind: 'query', allow: ['human'], stream: 'system', mcp: false, summary: 'Pending join requests and paired agents.', input: z.object({}), output: pending }),
   proc({ name: 'project.archive', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Archive a project.', input: z.object({ projectId: ProjectId }), output: pending }),
   proc({ name: 'project.delete', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Delete a project.', input: z.object({ projectId: ProjectId }), output: pending }),
   proc({ name: 'project.pin', kind: 'command', allow: ['human'], stream: 'system', mcp: false, summary: 'Pin or unpin a project in the sidebar.', input: z.object({ projectId: ProjectId, pinned: z.boolean() }), output: pending }),
