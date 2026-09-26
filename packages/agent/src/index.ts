@@ -9,6 +9,7 @@ export * from './auth.ts';
 export * from './format.ts';
 export * from './instructions.ts';
 export * from './bridge.ts';
+export * from './agent-session.ts';
 export * from './stdio.ts';
 export * from './install.ts';
 export * from './clients.ts';

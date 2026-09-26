@@ -1,6 +1,6 @@
 # ADR-0003: Identity slots and automatic rejoin
 
-- Status: accepted (2026-09-26)
+- Status: accepted (2026-09-26); partly superseded by [ADR-0016](0016-identity-by-join-name.md): the slot is optional, and without it identity comes from the join name
 - See also: [architecture](../README.md) · [spec gaps](../spec-gaps.md)
 
 ## Context

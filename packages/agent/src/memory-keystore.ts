@@ -23,4 +23,7 @@ export class MemoryKeyStore implements KeyStore {
   async clearPending(hubId: string, slot: string): Promise<void> {
     this.pending.delete(`${hubId}/${slot}`);
   }
+  async listPending(hubId: string): Promise<string[]> {
+    return [...this.pending.keys()].filter((k) => k.startsWith(`${hubId}/`)).map((k) => k.slice(hubId.length + 1));
+  }
 }

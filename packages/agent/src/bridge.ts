@@ -1,26 +1,20 @@
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Transport as McpTransport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { z } from 'zod';
-import {
-  mcpToolsFor,
-  PRIORITIES,
-  PROCEDURES,
-  type InboxCounts,
-  type Priority,
-  type PrincipalKind,
-  type ProcedureDef,
-  type TransportConnector,
-} from '@round-table/protocol';
-import { authenticate, confirmJoin, requestJoin, type HubInfo, type SessionInfo } from './auth.ts';
-import { inboxBanner, STATUS_PREFIX } from './banner.ts';
-import { formatItems, formatResult, type WaitItem } from './format.ts';
-import { HubClient, HubError } from '@round-table/protocol';
-import type { Identity } from './identity.ts';
-import { briefing, LOOP_REMINDER, PAIRED_WELCOME, roleBrief, serverInstructions, TOOL_DESCRIPTIONS } from './instructions.ts';
-import type { KeyStore, PendingJoin } from './keystore.ts';
+import { HubClient, mcpToolsFor, PROCEDURES, type PrincipalKind, type ProcedureDef, type TransportConnector } from '@round-table/protocol';
+import { AgentSession, type Role } from './agent-session.ts';
+import { STATUS_PREFIX } from './banner.ts';
+import { assertSlot } from './identity.ts';
+import { serverInstructions, TOOL_DESCRIPTIONS } from './instructions.ts';
+import type { KeyStore } from './keystore.ts';
 
 export interface BridgeOptions {
-  slot: string;
+  /**
+   * Fixed identity slot: this server is one agent (Claude Code: one folder, one agent), and it
+   * rejoins at startup. Without a slot, identities come from the names agents join with, so one
+   * server can carry several agents, e.g. several chats of one IDE (ADR-0016).
+   */
+  slot?: string;
   connector: TransportConnector;
   keyStore: KeyStore;
   /** The agent's client, e.g. `claude-code`; shown to the human at pairing. */
@@ -28,7 +22,7 @@ export interface BridgeOptions {
   /** Longest wait: below the client's tool timeout (S0: 50 s by default, 240 s where install raises it). */
   waitMaxMs: number;
   /**
-   * 'dynamic': tools appear per role via tools/list_changed (verified for Claude Code).
+   * 'dynamic': tools appear per role via tools/list_changed (verified for Claude Code; fixed slot only).
    * 'static': every tool is always listed and the hub enforces who may call what (ADR-0014).
    */
   tools?: 'dynamic' | 'static';
@@ -40,8 +34,6 @@ export interface BridgeOptions {
   reconnect?: { initialMs: number; maxMs: number };
 }
 
-type Role = 'unpaired' | 'worker' | 'leader';
-
 /** Fields rt-agent fills itself; the model never sees them (ADR-0003). */
 const FILLED: Record<string, string[]> = {
   join_request: ['publicKey', 'client'],
@@ -49,9 +41,6 @@ const FILLED: Record<string, string[]> = {
   rejoin: ['agentId'],
   wait: ['ack'],
 };
-
-const ACTIVITY_DUE_MS = 5 * 60_000;
-const PAIRING_TOOLS = new Set(['join_request', 'join_confirm', 'rejoin']);
 
 /** Catalog summary plus who may call it, so a static tool list still tells the model what applies to it. */
 function describe(def: ProcedureDef): string {
@@ -61,35 +50,30 @@ function describe(def: ProcedureDef): string {
   return def.summary;
 }
 
+/** The identity slot for a join name: "Ada Lovelace" → "ada-lovelace". */
+export function slotForName(name: string): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/, '');
+  return assertSlot(slug || 'agent');
+}
+
+const AS_FIELD = z
+  .string()
+  .min(1)
+  .optional()
+  .describe('Your Round Table name (the one you joined as). Needed only when several agents share this server.');
+
 /**
- * rt-agent (architecture §2): an MCP stdio server for one agent session and a hub client.
- * It owns everything mechanical, so the model sees plain tools: the key, pairing crypto,
- * automatic rejoin, delivery acks, the "[Round Table]" status line, and the tool list per role.
+ * rt-agent (architecture §2): an MCP stdio server and hub client. It owns everything mechanical,
+ * so the model sees plain tools: keys, pairing crypto, rejoin, delivery acks, status and
+ * next-step lines. Each agent it carries is an AgentSession with its own hub connection.
  */
 export class AgentBridge {
   readonly server: McpServer;
-  private readonly options: Required<Omit<BridgeOptions, 'log'>> & Pick<BridgeOptions, 'log'>;
+  private readonly options: Required<Omit<BridgeOptions, 'log' | 'slot'>> & Pick<BridgeOptions, 'log' | 'slot'>;
   private readonly tools = new Map<string, RegisteredTool>();
-  private hub: HubClient | undefined;
-  private hubInfo: HubInfo | undefined;
-  private identity: Identity | undefined;
-  private role: Role = 'unpaired';
-  private session: SessionInfo | undefined;
-  private fenced = false;
-  private closed = false;
-  private pendingJoin: PendingJoin | undefined;
-  private counts: InboxCounts = zeroCounts();
-  /** Deliveries handed to the model and not yet acked, with their priority (acked on the next wait). */
-  private handed = new Map<number, Priority>();
-  private lastActivityAt: number;
-  private briefed = false;
-  /** Set when the role changes; the next result explains the new role. */
-  private roleChanged = false;
-  /** The last messages handed to the model included one from the human. */
-  private handedHuman = false;
-  /** Last boardVersion relayed to the model (filled into proposals as baseSeq). */
-  private boardVersion: number | undefined;
-  private reconnectDelay: number;
+  /** Agents in this server, by slot. With a fixed slot there is exactly one. */
+  private readonly sessions = new Map<string, AgentSession>();
+  private readonly named: boolean;
 
   constructor(options: BridgeOptions) {
     this.options = {
@@ -99,8 +83,7 @@ export class AgentBridge {
       briefing: false,
       ...options,
     };
-    this.lastActivityAt = this.options.now();
-    this.reconnectDelay = this.options.reconnect.initialMs;
+    this.named = options.slot === undefined;
     this.server = new McpServer(
       { name: 'roundtable', version: '0.1.0' },
       { instructions: serverInstructions(Math.round(options.waitMaxMs / 1000)), capabilities: { tools: { listChanged: true } } },
@@ -114,82 +97,46 @@ export class AgentBridge {
           role: 'user' as const,
           content: {
             type: 'text' as const,
-            text: 'Join the Round Table. If you are not paired yet, call join_request with a short name for yourself, show me the match phrase, and wait for me to paste the code. After that, or if you are already paired, the Round Table drives this session: follow the "[Round Table] next" line on every result and keep working through its tools.',
+            text: 'Join the Round Table. Call join_request with a short name for yourself; if that name is already paired you are back in at once, otherwise show me the match phrase and wait for me to paste the code. After that the Round Table drives this session: follow the "[Round Table] next" line on every result and keep working through its tools.',
           },
         }],
       }),
     );
-    this.applyRole();
+    if (options.slot !== undefined) this.sessions.set(options.slot, this.newSession(assertSlot(options.slot)));
+    this.applyTools();
   }
 
-  /** Connects to the hub (and rejoins if this slot has an identity), then serves MCP on `transport`. */
+  /** Connects the fixed-slot agent (rejoining if it has an identity), then serves MCP on `transport`. */
   async start(transport: McpTransport): Promise<void> {
-    await this.connectHub().catch((error: unknown) => {
-      this.log(`hub not reachable yet (${errorText(error)}); retrying in the background`);
-      this.scheduleReconnect();
-    });
+    for (const session of this.sessions.values()) await session.connectOrRetry();
     await this.server.connect(transport);
   }
 
   async close(): Promise<void> {
-    this.closed = true;
-    this.hub?.close('rt-agent closing');
+    for (const session of this.sessions.values()) session.close();
     await this.server.close();
   }
 
+  /** Role of the only agent (tests and logs); 'fenced' once replaced. */
   get currentRole(): Role | 'fenced' {
-    return this.fenced ? 'fenced' : this.role;
+    const only = [...this.sessions.values()][0];
+    if (!only) return 'unpaired';
+    return only.fenced ? 'fenced' : only.role;
   }
 
-  // ── hub connection ────────────────────────────────────────────────────────────────────
-
-  private async connectHub(): Promise<void> {
-    const client = new HubClient(await this.options.connector.connect('agent'));
-    client.on('inbox', (data) => {
-      this.counts = data as InboxCounts;
+  private newSession(slot: string): AgentSession {
+    return new AgentSession({
+      slot,
+      connector: this.options.connector,
+      keyStore: this.options.keyStore,
+      clientName: this.options.clientName,
+      waitMaxMs: this.options.waitMaxMs,
+      briefing: this.options.briefing,
+      now: this.options.now,
+      reconnect: this.options.reconnect,
+      log: (m) => this.options.log?.(m),
+      onChange: () => this.applyTools(),
     });
-    client.on('role', (data) => {
-      this.role = (data as { role: Role }).role;
-      this.roleChanged = true;
-      this.applyRole();
-    });
-    client.on('fenced', () => {
-      this.fenced = true;
-      this.log('fenced: a newer session proved this identity; this one stops');
-      this.applyRole();
-    });
-    client.onClose(() => {
-      if (this.hub === client) this.hub = undefined;
-      if (!this.closed && !this.fenced) this.scheduleReconnect();
-    });
-    this.hubInfo = await client.call<HubInfo>('hub.info');
-    this.hub = client;
-    this.identity = await this.options.keyStore.load(this.hubInfo.hubId, this.options.slot);
-    if (this.identity) await this.authenticate();
-    this.reconnectDelay = this.options.reconnect.initialMs;
-  }
-
-  private scheduleReconnect(): void {
-    if (this.closed || this.fenced) return;
-    const delay = this.reconnectDelay;
-    this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.options.reconnect.maxMs);
-    const timer = setTimeout(() => {
-      this.connectHub().catch((error: unknown) => {
-        this.log(`reconnect failed (${errorText(error)})`);
-        this.scheduleReconnect();
-      });
-    }, delay);
-    timer.unref?.();
-  }
-
-  private async authenticate(): Promise<void> {
-    if (!this.hub || !this.identity) return;
-    const session = await authenticate(this.hub, this.identity);
-    this.session = session;
-    this.role = session.role;
-    this.handed.clear(); // unacked deliveries are re-sent by the hub (at-least-once)
-    this.applyRole();
-    this.log(`authenticated as ${this.identity.agentId} (${session.role}, epoch ${session.epoch}, ${session.resumed ? 'resumed' : 'new joiner'})`);
   }
 
   // ── tools ─────────────────────────────────────────────────────────────────────────────
@@ -197,22 +144,28 @@ export class AgentBridge {
   private register(def: ProcedureDef): void {
     const hidden = new Set([...(FILLED[def.name] ?? []), 'projectId']);
     const shape = (def.input as z.ZodObject).shape;
-    const input = z.object(Object.fromEntries(Object.entries(shape).filter(([key]) => !hidden.has(key))));
+    const fields: Record<string, z.ZodType> = Object.fromEntries(Object.entries(shape).filter(([key]) => !hidden.has(key)));
+    // Several agents may share this server: every call but join_request says who is calling.
+    if (this.named && def.name !== 'join_request') fields.as = AS_FIELD;
     const tool = this.server.registerTool(
       def.name,
-      { description: TOOL_DESCRIPTIONS[def.name] ?? describe(def), inputSchema: input },
+      { description: TOOL_DESCRIPTIONS[def.name] ?? describe(def), inputSchema: z.object(fields) },
       async (args: Record<string, unknown>) => this.call(def.name, args),
     );
     this.tools.set(def.name, tool);
   }
 
-  /** Shows the tools this session may use now; the SDK sends tools/list_changed (S0: honored mid-session). */
-  private applyRole(): void {
+  /**
+   * Which tools the model sees. Per-role lists (tools/list_changed) only make sense for one agent
+   * per server; with names, or in static mode, every tool stays listed and the hub enforces roles.
+   */
+  private applyTools(): void {
     let visible: Set<string>;
-    if (this.fenced) visible = new Set();
-    else if (this.options.tools === 'static') visible = new Set(this.tools.keys());
-    else if (this.role !== 'unpaired') visible = new Set(mcpToolsFor(this.role as PrincipalKind).map((p) => p.name));
-    else if (this.identity) visible = new Set(['rejoin']);
+    const only = [...this.sessions.values()][0];
+    if (this.named || this.options.tools === 'static') visible = new Set(this.tools.keys());
+    else if (!only || only.fenced) visible = new Set();
+    else if (only.role !== 'unpaired') visible = new Set(mcpToolsFor(only.role as PrincipalKind).map((p) => p.name));
+    else if (only.identity) visible = new Set(['rejoin']);
     else visible = new Set(['join_request', 'join_confirm']);
     for (const [name, tool] of this.tools) {
       if (visible.has(name) && !tool.enabled) tool.enable();
@@ -220,136 +173,65 @@ export class AgentBridge {
     }
   }
 
-  private async call(name: string, args: Record<string, unknown>) {
+  private async call(name: string, rawArgs: Record<string, unknown>) {
+    const { as, ...args } = rawArgs;
+    const picked = await this.pick(name, args, typeof as === 'string' ? as : undefined);
+    if ('error' in picked) return { content: [{ type: 'text' as const, text: `${STATUS_PREFIX} ${name} failed (${picked.error})` }], isError: true };
+    const out = await picked.session.handle(name, args);
+    return { content: [{ type: 'text' as const, text: out.text }], ...(out.isError && { isError: true }) };
+  }
+
+  /** The agent a call belongs to. With a fixed slot there is one; with names, `as` or the only one. */
+  private async pick(name: string, args: Record<string, unknown>, as: string | undefined): Promise<{ session: AgentSession } | { error: string }> {
+    if (!this.named) return { session: [...this.sessions.values()][0]! };
+
+    if (name === 'join_request') {
+      const slot = slotForName(String(args.name ?? ''));
+      return { session: await this.ensure(slot) };
+    }
+    if (as !== undefined) {
+      const slot = slotForName(as);
+      const known = this.sessions.get(slot);
+      if (known) return { session: known };
+      // A restarted server: the name may have an identity or a pending request on disk.
+      if (name === 'join_confirm' || name === 'rejoin') return { session: await this.ensure(slot) };
+      return { error: `no agent named "${as}" has joined through this server yet: call join_request with name "${as}" first` };
+    }
+    const all = [...this.sessions.values()];
+    if (all.length === 1) return { session: all[0]! };
+    if (all.length > 1) {
+      return { error: `several agents use this server (${all.map((s) => s.slot).join(', ')}): pass as with your Round Table name` };
+    }
+    if (name === 'join_confirm') {
+      // Restarted between join_request and the code: find the pending request on disk.
+      const slot = await this.onlyPendingSlot();
+      if (slot) return { session: await this.ensure(slot) };
+    }
+    return { error: 'not joined yet: call join_request with your name first' };
+  }
+
+  private async ensure(slot: string): Promise<AgentSession> {
+    let session = this.sessions.get(slot);
+    if (!session) {
+      session = this.newSession(slot);
+      this.sessions.set(slot, session);
+      await session.connectOrRetry();
+    }
+    return session;
+  }
+
+  private async onlyPendingSlot(): Promise<string | undefined> {
+    // Only needs the hub id, so a bare connection: never authenticate anyone here.
+    const client = await this.options.connector.connect('agent').then((t) => new HubClient(t)).catch(() => undefined);
+    if (!client) return undefined;
     try {
-      if (this.fenced) throw new HubError('fenced', 'this session was replaced by a newer one with the same identity; stop working in this session');
-      const hub = this.hub;
-      if (!hub) throw new HubError('internal', 'the Round Table hub is unreachable; rt-agent keeps retrying. Try again shortly.');
-      if (this.role === 'unpaired' && !PAIRING_TOOLS.has(name)) {
-        throw new HubError('forbidden', this.identity ? 'not connected to the hub yet; try again shortly' : 'not paired yet: call join_request first');
-      }
-      const text = await this.dispatch(hub, name, args);
-      const status = await this.statusLine(hub, name);
-      const parts = [text, status, await this.nextLine(hub)];
-      if (this.options.briefing && !this.briefed) {
-        parts.push(briefing(Math.round(this.options.waitMaxMs / 1000)));
-        this.briefed = true;
-      }
-      return { content: [{ type: 'text' as const, text: parts.filter(Boolean).join('\n\n') }] };
-    } catch (error) {
-      const e = error instanceof HubError ? error : new HubError('internal', errorText(error));
-      const reason = e.rejection ? `${e.rejection}: ${e.message}` : `${e.code}: ${e.message}`;
-      const next = this.hub && !this.fenced ? await this.nextLine(this.hub).catch(() => '') : '';
-      return { content: [{ type: 'text' as const, text: [`${STATUS_PREFIX} ${name} failed (${reason})`, next].filter(Boolean).join('\n\n') }], isError: true };
+      const { hubId } = await client.call<{ hubId: string }>('hub.info');
+      const slots = await this.options.keyStore.listPending(hubId);
+      return slots.length === 1 ? slots[0] : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      client.close();
     }
   }
-
-  private async dispatch(hub: HubClient, name: string, args: Record<string, unknown>): Promise<string> {
-    switch (name) {
-      case 'join_request': {
-        if (this.identity) return `Already paired as ${this.identity.agentId}.`;
-        this.pendingJoin = await requestJoin(hub, {
-          name: String(args.name),
-          client: this.options.clientName,
-          tags: (args.tags as string[] | undefined) ?? [],
-          capabilities: (args.capabilities as string[] | undefined) ?? [],
-        });
-        await this.options.keyStore.savePending(this.options.slot, this.pendingJoin);
-        return `Join request sent. Show the human this match phrase: ${this.pendingJoin.request.matchPhrase}
-They will check it in the Round Table app, click Allow, and paste an 8-character code into this chat. Then call join_confirm with that code.`;
-      }
-      case 'join_confirm': {
-        // After an rt-agent restart the pending request comes back from the key store.
-        this.pendingJoin ??= this.hubInfo ? await this.options.keyStore.loadPending(this.hubInfo.hubId, this.options.slot) : undefined;
-        if (!this.pendingJoin) throw new HubError('invalid_input', 'call join_request first');
-        const identity = await confirmJoin(hub, this.pendingJoin, String(args.code), this.options.now());
-        await this.options.keyStore.save(this.options.slot, identity);
-        await this.options.keyStore.clearPending(identity.hubId, this.options.slot);
-        this.identity = identity;
-        this.pendingJoin = undefined;
-        await this.authenticate();
-        return PAIRED_WELCOME(this.role, this.session?.projectId ?? 'unknown');
-      }
-      case 'rejoin':
-        await this.authenticate();
-        return `Rejoined as ${this.identity?.agentId} (${this.role}).`;
-      case 'wait': {
-        const timeoutMs = Math.min(typeof args.timeoutMs === 'number' ? args.timeoutMs : this.options.waitMaxMs, this.options.waitMaxMs);
-        const out = await this.fetch(hub, { ...args, timeoutMs });
-        return formatItems(out.items, out.more);
-      }
-      case 'activity':
-        this.lastActivityAt = this.options.now();
-        return formatResult(await hub.call(name, args));
-      case 'board_propose': {
-        // D5: the proposal cites the board version the model last read, unless it gave one.
-        const input = args.baseSeq === undefined && this.boardVersion !== undefined ? { ...args, baseSeq: this.boardVersion } : args;
-        return formatResult(await hub.call(name, input));
-      }
-      default: {
-        const out = await hub.call(name, args);
-        const version = (out as { boardVersion?: unknown } | null)?.boardVersion;
-        if (typeof version === 'number') this.boardVersion = version;
-        return formatResult(out);
-      }
-    }
-  }
-
-  /** One wait round trip: acks what the model already has, records what it hands over now. */
-  private async fetch(hub: HubClient, args: Record<string, unknown>): Promise<{ items: WaitItem[]; more: number }> {
-    const out = await hub.call<{ items: WaitItem[]; more: number }>('wait', { ...args, ack: [...this.handed.keys()] });
-    this.handed = new Map(out.items.map((i) => [i.deliveryId, i.priority as Priority]));
-    this.handedHuman = out.items.some((i) => i.role === 'human');
-    return out;
-  }
-
-  /**
-   * The piggyback status line (ADR-0001). Human and critical messages are handed over inline, so
-   * a busy agent sees them at its next Round Table call; anything else is reported as counts.
-   */
-  private async statusLine(hub: HubClient, tool: string): Promise<string> {
-    if (tool === 'wait' || this.role === 'unpaired') return '';
-    const pending = this.pendingCounts();
-    if (pending.human + pending.critical > 0) {
-      const out = await this.fetch(hub, { timeoutMs: 1 });
-      if (out.items.length > 0) return `${STATUS_PREFIX} messages for you:\n${formatItems(out.items, out.more)}`;
-    }
-    return inboxBanner(this.pendingCounts(), this.options.now() - this.lastActivityAt > ACTIVITY_DUE_MS);
-  }
-
-  /**
-   * The Round Table drives the session (spec D3): every result ends with the next step the hub
-   * computes from the board, so the model keeps looping through tools instead of stopping to chat.
-   */
-  private async nextLine(hub: HubClient): Promise<string> {
-    if (this.role === 'unpaired' || this.fenced) return '';
-    const lines: string[] = [];
-    if (this.roleChanged) {
-      lines.push(`${STATUS_PREFIX} your role changed: you are now the ${this.role}. ${roleBrief(this.role)}`);
-      this.roleChanged = false;
-    }
-    const next = await hub.call<{ tool: string; step: string }>('agent.next').catch(() => undefined);
-    const human = this.handedHuman ? 'First do what the human asked above; it outranks the board. Then: ' : '';
-    lines.push(`${STATUS_PREFIX} next: ${human}${next?.step ?? 'call wait.'}\n${LOOP_REMINDER}`);
-    return lines.join('\n');
-  }
-
-  /** Hub counts minus what the model already holds (acked on its next wait). */
-  private pendingCounts(): InboxCounts {
-    const counts = { ...this.counts };
-    for (const priority of this.handed.values()) counts[priority] = Math.max(0, counts[priority] - 1);
-    return counts;
-  }
-
-  private log(message: string): void {
-    this.options.log?.(`[rt-agent ${this.options.slot}] ${message}`);
-  }
-}
-
-function zeroCounts(): InboxCounts {
-  return Object.fromEntries(PRIORITIES.map((p) => [p, 0])) as InboxCounts;
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

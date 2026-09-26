@@ -161,7 +161,7 @@ describe('S1 rt-agent over MCP', () => {
     expect(desc.find((x) => x.name === 'board_commit')?.description).toMatch(/^Leader only\./);
     expect(desc.find((x) => x.name === 'wait')?.description).toContain('[Round Table]');
 
-    expect(await a.call('wait')).toContain('not paired yet: call join_request first');
+    expect(await a.call('wait')).toContain('not joined yet: call join_request with your name first');
     const { projectId } = await pairViaMcp(a, 'Codex A', { newProjectName: 'P' });
     expect(await a.tools()).toEqual(all); // nothing changes; no list_changed needed
     expect(await a.call('board_commit', { ticketId: 'tkt_00000000000000000000000001' })).toMatch(/^ERROR .*forbidden: worker may not call board_commit/);

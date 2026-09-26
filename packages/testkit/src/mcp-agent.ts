@@ -20,10 +20,10 @@ export class McpAgent {
     this.keyStore = keyStore;
   }
 
-  static async start(t: TestHub, options: { slot?: string; keyStore?: KeyStore; waitMaxMs?: number; tools?: 'dynamic' | 'static'; briefing?: boolean } = {}): Promise<McpAgent> {
+  static async start(t: TestHub, options: { /** null: no fixed slot, agents are identified by join name */ slot?: string | null; keyStore?: KeyStore; waitMaxMs?: number; tools?: 'dynamic' | 'static'; briefing?: boolean } = {}): Promise<McpAgent> {
     const keyStore = options.keyStore ?? new MemoryKeyStore();
     const bridge = new AgentBridge({
-      slot: options.slot ?? 'a',
+      ...(options.slot !== null && { slot: options.slot ?? 'a' }),
       connector: t.network,
       keyStore,
       clientName: 'test-client',

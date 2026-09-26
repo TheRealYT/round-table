@@ -18,4 +18,6 @@ export interface KeyStore {
   loadPending(hubId: string, slot: string): Promise<PendingJoin | undefined>;
   savePending(slot: string, pending: PendingJoin): Promise<void>;
   clearPending(hubId: string, slot: string): Promise<void>;
+  /** Slots with a pending join request for this hub (to finish pairing after a restart). */
+  listPending(hubId: string): Promise<string[]>;
 }

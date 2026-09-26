@@ -18,8 +18,8 @@ const COMMANDS: Record<string, { slice: string; usage: string; summary: string }
   'hub start': { slice: 'S1', usage: '[--port 7777] [--data <dir>] [--app <dir>]', summary: 'Start the hub on 127.0.0.1 and print the one-time login URL.' },
   'hub login': { slice: 'S1', usage: '', summary: 'Print a new one-time login link for the running hub.' },
   demo: { slice: 'S1', usage: '[--dir <path>] [--client <id>] [--agents lead,ada,bo]', summary: 'Create a sample repo and one worktree per agent, installed for a client, and print what to do next.' },
-  'agent run': { slice: 'S1', usage: '--slot <name> [--client <id>] [--hub <url>] [--wait-max-ms <n>] [--tools dynamic|static]', summary: 'Run rt-agent on stdio (what an agent\'s MCP client starts).' },
-  'agent install': { slice: 'S1', usage: '--client <id> --slot <name> [--dir <path>] [--repo <path> [--main <branch>]] [--hub <url>]', summary: `Write <dir>'s MCP config for a client so it runs rt-agent. Clients: ${Object.keys(CLIENTS).join(', ')}.` },
+  'agent run': { slice: 'S1', usage: '[--slot <name>] [--client <id>] [--hub <url>] [--wait-max-ms <n>] [--tools dynamic|static]', summary: 'Run rt-agent on stdio (what an agent\'s MCP client starts).' },
+  'agent install': { slice: 'S1', usage: '--client <id> [--slot <name>] [--dir <path>] [--repo <path> [--main <branch>]] [--hub <url>]', summary: `Write <dir>'s MCP config for a client so it runs rt-agent. Clients: ${Object.keys(CLIENTS).join(', ')}.` },
   hook: { slice: 'S6', usage: 'pre-tool-use | post-tool-use', summary: 'Hook adapter entry point, called by the agent client.' },
   supervise: { slice: 'S4', usage: '', summary: 'Restart dead agent sessions (D3).' },
 };
@@ -94,14 +94,15 @@ async function agentRun(args: string[]): Promise<void> {
     args,
     options: { slot: { type: 'string' }, hub: { type: 'string' }, client: { type: 'string' }, 'wait-max-ms': { type: 'string' }, tools: { type: 'string' } },
   });
-  if (!values.slot) throw new Error('--slot is required');
+  // Without --slot, each agent's identity comes from the name it joins with, so one server can carry
+  // several agents (e.g. several chats of one IDE); with --slot, this server is exactly one agent.
   // Unknown clients get the generic profile: short waits, static tools, briefing in results (ADR-0014).
   const profile = clientProfile(values.client && values.client in CLIENTS ? values.client : 'generic');
   const tools = values.tools ?? (profile.dynamicTools ? 'dynamic' : 'static');
   if (tools !== 'dynamic' && tools !== 'static') throw new Error('--tools must be dynamic or static');
   const hubUrl = values.hub ?? readHubPointer()?.url ?? `ws://127.0.0.1:${DEFAULT_PORT}`;
   await runAgentStdio({
-    slot: values.slot,
+    ...(values.slot !== undefined && { slot: values.slot }),
     connector: new WsConnector(hubUrl),
     keyStore: new FileKeyStore(rtHome()),
     clientName: values.client ?? 'mcp-client',
@@ -116,7 +117,6 @@ function agentInstall(args: string[]): void {
     args,
     options: { client: { type: 'string' }, slot: { type: 'string' }, dir: { type: 'string' }, hub: { type: 'string' }, repo: { type: 'string' }, main: { type: 'string' } },
   });
-  if (!values.slot) throw new Error('--slot is required');
   if (!values.client) throw new Error(`--client is required: ${Object.keys(CLIENTS).join(', ')}`);
   const dir = resolve(values.dir ?? '.');
   if (values.repo) {
@@ -126,8 +126,8 @@ function agentInstall(args: string[]): void {
   }
   const hubUrl = values.hub ?? readHubPointer()?.url ?? `ws://127.0.0.1:${DEFAULT_PORT}`;
   const env = process.env.RT_HOME ? { RT_HOME: process.env.RT_HOME } : undefined;
-  const { profile, files, notes } = installAgent({ client: values.client, dir, slot: values.slot, hubUrl, command: [process.execPath, MAIN], ...(env && { env }) });
-  console.log(`Installed Round Table for ${profile.name}, slot "${values.slot}":`);
+  const { profile, files, notes } = installAgent({ client: values.client, dir, ...(values.slot !== undefined && { slot: values.slot }), hubUrl, command: [process.execPath, MAIN], ...(env && { env }) });
+  console.log(`Installed Round Table for ${profile.name}${values.slot ? `, slot "${values.slot}"` : ' (agents are identified by the name they join with)'}:`);
   for (const f of files) console.log(`  ${f}`);
   console.log('');
   for (const n of notes) console.log(n);

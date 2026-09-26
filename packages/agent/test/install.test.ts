@@ -62,6 +62,13 @@ describe('rt agent install', () => {
     }
   });
 
+  it('leaves --slot out when none is given, so agents are identified by their join name (ADR-0016)', () => {
+    dir = mkdtempSync(join(tmpdir(), 'rt-install-'));
+    const { notes } = installAgent({ hubUrl: 'ws://127.0.0.1:7777', command: ['/usr/bin/node', '/rt/main.ts'], client: 'generic', dir });
+    const entry = JSON.parse(notes[1]!) as { roundtable: { args: string[] } };
+    expect(entry.roundtable.args).toEqual(['/rt/main.ts', 'agent', 'run', '--hub', 'ws://127.0.0.1:7777', '--client', 'generic']);
+  });
+
   it('refuses unknown clients and slot names that could escape paths', () => {
     dir = mkdtempSync(join(tmpdir(), 'rt-install-'));
     expect(() => installAgent({ ...base, client: 'nope', dir })).toThrow(/unknown client/);

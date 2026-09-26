@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { identityPath } from './identity.ts';
 import type { Identity } from './identity.ts';
@@ -34,6 +34,12 @@ export class FileKeyStore implements KeyStore {
 
   async clearPending(hubId: string, slot: string): Promise<void> {
     await rm(pendingPath(this.home, hubId, slot), { force: true });
+  }
+
+  async listPending(hubId: string): Promise<string[]> {
+    const dir = dirname(identityPath(this.home, hubId, 'x'));
+    const names = await readdir(dir).catch(() => [] as string[]);
+    return names.filter((n) => n.endsWith('.pending.json')).map((n) => n.slice(0, -'.pending.json'.length));
   }
 }
 

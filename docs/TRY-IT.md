@@ -38,6 +38,31 @@ rt demo --dir ~/rt-demo             # add --client codex|gemini|opencode|cursor|
 
 Lost the login link? Run `rt hub login`.
 
+## Path A2: add it to any IDE by hand (Cursor, Antigravity, VS Code, …)
+
+With the hub running, add this stdio server to the IDE's MCP config. Use absolute paths, and for `command` use the output of `which node` (Node 24):
+
+```json
+{
+  "mcpServers": {
+    "roundtable": {
+      "command": "/usr/local/bin/node",
+      "args": ["/ABS/PATH/round-table/packages/cli/src/main.ts", "agent", "run", "--hub", "ws://127.0.0.1:7777"]
+    }
+  }
+}
+```
+
+- **Don't put `--slot` in an IDE's config.** A fixed slot makes every chat started from that config the same agent: each new chat rejoins as it and replaces the previous one. Without `--slot`, an agent's identity comes from the name it joins with:
+  - "Join the Round Table as Ada" in one chat and "… as Bo" in another are two agents.
+  - A new chat that says "… as Ada" is Ada again, and needs no code.
+  - If the IDE runs one server for all chats, that server carries all the agents, and each chat's tool calls name the agent they belong to.
+- Where to put it:
+  - **Cursor:** Settings → MCP → Add new MCP server (`~/.cursor/mcp.json`).
+  - **Antigravity:** Agent panel → … → MCP Servers → Manage → View raw config (`mcp_config.json`).
+  - **VS Code:** `.vscode/mcp.json`, with `"servers"` instead of `"mcpServers"` and `"type": "stdio"`.
+- `rt agent install --client generic` prints this entry for you.
+
 ## Path B: fully automatic (Claude Code, about 2 minutes)
 
 ```sh
