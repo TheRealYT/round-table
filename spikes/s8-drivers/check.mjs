@@ -65,7 +65,8 @@ const RECIPES = {
     // conversation_id and permission_mode "always-proceed"; resume is --conversation <id>; MCP
     // servers are registered with `agy mcp add` (a user-level setting, removed again at the end).
     verified: null,
-    mcp: { name: 'rt-check-board', add: (ctx, name) => [['mcp', 'add', name, '--', ctx.server.command, ...ctx.server.args, ctx.server.env.BOARD_LOG], ['mcp', 'add', name, ctx.server.command, ...ctx.server.args, ctx.server.env.BOARD_LOG]], remove: (name) => ['mcp', 'remove', name], list: ['mcp', 'list'], help: [['mcp', '--help'], ['mcp', 'add', '--help']] },
+    // `agy mcp add [flags] <name> <command> [args...]`, flags (e.g. -e KEY=value) before the name.
+    mcp: { name: 'rt-check-board', add: (ctx, name) => [['mcp', 'add', '-e', `BOARD_LOG=${ctx.server.env.BOARD_LOG}`, name, ctx.server.command, ...ctx.server.args], ['mcp', 'add', name, '--', ctx.server.command, ...ctx.server.args, ctx.server.env.BOARD_LOG]], remove: (name) => ['mcp', 'remove', name], list: ['mcp', 'list'], help: [['mcp', '--help'], ['mcp', 'add', '--help']] },
     flags: (ctx) => ['--output-format', 'stream-json', ...pick(ctx, '--dangerously-skip-permissions')],
     first: (ctx) => [['-p', ctx.prompt, ...RECIPES.antigravity.flags(ctx)]],
     resume: (ctx) => [
@@ -347,6 +348,20 @@ function summarize(line) {
   } catch {
     return `output: ${clip(line, 160)}`;
   }
+  // Antigravity CLI (agy 1.2.11): {event: init|step_update|result}; steps carry tool calls, thinking
+  // time with token usage, and streamed text (text_delta, skipped here; the result has the full text).
+  if (e.event === 'step_update' && e.step_update) {
+    const s = e.step_update;
+    if (s.step_type === 'tool' && s.state === 'ACTIVE') {
+      const p = s.tool_info?.parameters ?? {};
+      const what = s.tool_name === 'call_mcp_tool' ? `${p.ServerName}/${p.ToolName} (MCP)` : s.tool_name;
+      const detail = p.CommandLine ?? p.TargetFile ?? p.AbsolutePath ?? '';
+      return `calls ${what}${detail ? `: ${clip(detail, 90)}` : ''}`;
+    }
+    if (s.step_type === 'agent_response' && s.state === 'DONE') return `thought ${Math.round(s.duration_seconds ?? 0)} s${s.usage ? ` (${s.usage.total_tokens} tokens)` : ''}`;
+    return null;
+  }
+  if (e.event === 'result' && e.result) return `result: ${e.result.status}${e.result.response ? ` — “${clip(e.result.response, 120)}”` : ''}`;
   const main = e.type ?? (typeof e.event === 'string' ? e.event : undefined) ?? e.kind ?? e.msg?.type;
   const type = [main, e.subtype ?? (typeof e.event === 'object' ? e.event?.type : undefined)].filter(Boolean).join(':') || 'event';
   if (/delta|stream_event|partial/i.test(type)) return null;
