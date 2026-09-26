@@ -14,6 +14,7 @@ import { TimerScheduler } from './scheduler.ts';
 import { SqliteEventStore } from './sqlite-store.ts';
 import { Waiters } from './waiters.ts';
 import { ClaudeCodeDriver } from './drivers/claude-code.ts';
+import { AntigravityDriver } from './drivers/antigravity.ts';
 import type { Driver } from './drivers/driver.ts';
 import { MemorySecretStore, type SecretStore } from './secrets.ts';
 import { Supervisor, type AgentHost } from './supervisor.ts';
@@ -76,7 +77,7 @@ export class Hub {
 
     const git = options.git ?? new LocalGitHost();
     const secrets = options.secrets ?? new MemorySecretStore();
-    const drivers = options.drivers ?? { 'claude-code': new ClaudeCodeDriver() };
+    const drivers = options.drivers ?? { 'claude-code': new ClaudeCodeDriver(), antigravity: new AntigravityDriver() };
     this.supervisor = options.agentHost
       ? new Supervisor({ model: this.model, bus: this.bus, store: this.store, secrets, host: options.agentHost, drivers, now: () => clock.now(), maxChars: config.waitMaxChars, restartDelaysMs: config.restartDelaysMs, ...(options.log && { log: options.log }) })
       : undefined;

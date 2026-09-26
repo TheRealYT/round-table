@@ -56,3 +56,15 @@ The interrupt check uses a slow tool call and not a shell `sleep`, because Claud
 Event format: `{"event":"init","conversation_id":…}`, then `{"event":"step_update","step_update":{step_index, state: ACTIVE|DONE, step_type: user_input|agent_response|tool|system_message, tool_name, tool_info{name, parameters, output}, text_delta, duration_seconds, usage}}`, then `{"event":"result","result":{status: SUCCESS, response, duration_seconds, num_turns, usage}}`. The check now prints these steps.
 
 For a driver: `agy mcp add` is user-level (under `~/.gemini/antigravity-cli/`), so every agy session on the machine sees every registered server. Agents need their own rt-agent server, and an agent could call another agent's server by name through `call_mcp_tool`. The driver needs a per-agent config home, or a way to scope servers, before it can keep agents apart. `--input-format stream-json` could avoid the 14 s startup per message.
+
+### Antigravity CLI: 6 of 6 (agy 1.2.11, 2026-09-26), and its driver
+
+The third run in the user's sandbox passed all six checks, including interrupt. The driver (`packages/hub/src/drivers/antigravity.ts`) follows what the runs showed:
+- one `agy -p` process per message, continued with `--conversation <id>`;
+- SIGINT to interrupt a turn;
+- tool, text and token events taken from `step_update` and `result`, with cost reported as tokens only;
+- a turn that ends before `init` counts as a crash (e.g. not signed in), so the supervisor backs off;
+- each agent's rt-agent registered with `agy mcp add -e RT_HOME=… rt-<name>-<id>` while it runs and removed on stop;
+- the Round Table instructions at the start of a new conversation's first message, since agy has no system-prompt flag.
+
+It is covered by driver tests against a fake agy with the recorded event shapes. It has not yet run a real team: try `RT_E2E_KIND=antigravity node e2e/real-driven.ts`. Still open: `--input-format stream-json` (one long-lived process, which would avoid about 14 s of startup per message), and scoping MCP servers per agent.

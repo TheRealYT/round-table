@@ -213,6 +213,8 @@ export class Supervisor {
       const resumed = driven.cliSessionId !== null;
       live.proc = driver.start(
         {
+          agentId,
+          agentName: agent.name,
           command: provider.settings.command,
           cwd: workspace.cwd,
           env,

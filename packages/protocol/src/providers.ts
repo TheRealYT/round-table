@@ -55,7 +55,7 @@ export const PROVIDER_KINDS = [
     apiKeyEnv: 'GEMINI_API_KEY',
     login: 'Run `agy` once on the hub machine and sign in. (An API key also needs `"modelProvider": "gemini"` in `~/.gemini/antigravity-cli/settings.json`.)',
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-    driverVerified: false,
+    driverVerified: true, // S8 check 6/6 on agy 1.2.11 (2026-09-26)
     models: [],
     envHints: ['HTTPS_PROXY'],
   },

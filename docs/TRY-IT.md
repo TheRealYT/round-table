@@ -6,7 +6,7 @@ This is a guide to testing the current build by hand: what you need, three ways 
 
 - Node.js 24 LTS (26 also works) and pnpm 10
 - git
-- A coding CLI for the agents, installed and logged in **on the machine the hub runs on** (ideally a sandbox, since agents run without approval prompts). Claude Code can be run by the hub today. Codex, Antigravity CLI (`agy`), Cursor CLI and opencode can be set up in the app, but the hub starts them only once their driver passes the same check ([ADR-0018](architecture/adr/0018-round-table-runs-the-agents.md)).
+- A coding CLI for the agents, installed and logged in **on the machine the hub runs on** (ideally a sandbox, since agents run without approval prompts). Claude Code and the Antigravity CLI (`agy`) can be run by the hub today. Codex, Cursor CLI and opencode can be set up in the app, but the hub starts them only once their driver passes the same check ([ADR-0018](architecture/adr/0018-round-table-runs-the-agents.md)).
 - A browser on the same machine. The hub only listens on 127.0.0.1.
 
 ```sh
@@ -89,6 +89,7 @@ With the hub running, add this stdio server to the IDE's MCP config. Use absolut
 
 ```sh
 node e2e/real-driven.ts      # the hub runs a real leader and two workers; they deliver a change
+RT_E2E_KIND=antigravity node e2e/real-driven.ts   # the same team on the Antigravity CLI
 node e2e/real-claude.ts      # two real sessions pair through the app and message each other
 node e2e/real-claude-s2.ts   # a real leader and two workers deliver a change to a sample repo
 ```
@@ -119,7 +120,7 @@ That installs an agent you run yourself (path B). With path A you only attach th
 | Tasks | Plan approval by the human, claim and release (workers only), one branch per task | |
 | Change requests | Open, refresh after new commits, review and test requests, verdicts tied to the exact commit | Nobody reviews their own work; the leader never reviews. |
 | Merge gate | The hub merges main + the change in a scratch worktree, runs the test command, and moves main by compare-and-swap | A failing run or a conflict leaves main untouched and sends the task back to the author. |
-| Hub-run agents | Providers per CLI (binary, sign-in, API key, model, limit, custom and secret environment variables), install check and test run, starting several agents from one provider, worktree per agent, messages and board work delivered as turns, exact status, cost and tokens per turn, interrupt, stop and start, restart after a crash by resuming the conversation, and again after a hub restart | Claude Code only for now. |
+| Hub-run agents | Claude Code and Antigravity CLI. Providers per CLI (binary, sign-in, API key, model, limit, custom and secret environment variables), install check and test run, starting several agents from one provider, worktree per agent, messages and board work delivered as turns, exact status, cost and tokens per turn, interrupt, stop and start, restart after a crash by resuming the conversation, and again after a hub restart | Antigravity: about 15 s of startup per message and token counts only (no cost); its MCP servers are registered for your whole user while agents run. |
 | Agent loop (chat agents) | Every tool result carries the next step from the board; agents keep working through tools until told to stop; each agent card shows what its chat is doing (working, waiting for messages, stopped) | No role prompts needed. |
 | App | Agents (providers and running agents), the round table with transcripts and controls, Pairing, projects, Setup, task board, change requests, feed, composer; dark and light | Updates live. |
 | Clients (joining from a chat) | Claude Code (verified in real sessions); Codex, Gemini CLI, opencode (config verified); Cursor, VS Code (from their docs). The Gemini CLI profile is only for accounts that still have it (Google moved individual users to the Antigravity CLI in June 2026). | `rt agent install --client …` |
@@ -138,7 +139,7 @@ That installs an agent you run yourself (path B). With path A you only attach th
 | Home, Inbox, Logs with time travel, Metrics, History, Settings in the app | S5 | |
 | Git watcher (commits logged without agents reporting), BOARD.md export, retro, retention, hook adapter | S6 | |
 | App login surviving a hub restart | later | `rt hub login` |
-| The hub running Codex, Antigravity CLI, Cursor CLI or opencode | after each passes the S8 driver check | Run `node spikes/s8-drivers/check.mjs <codex\|antigravity\|cursor\|opencode>` where the CLI is logged in and send back the `.tar.gz` it makes; its driver is built from that. Meanwhile, join them from a chat (path B). |
+| The hub running Codex, Cursor CLI or opencode | after each passes the S8 driver check | Run `node spikes/s8-drivers/check.mjs <codex\|cursor\|opencode>` where the CLI is logged in and send back the `.tar.gz` it makes; its driver is built from that. Meanwhile, join them from a chat (path B). |
 
 ## How the agent loop works
 

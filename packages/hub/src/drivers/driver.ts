@@ -9,6 +9,9 @@ export interface McpServerSpec {
 }
 
 export interface DriverStart {
+  /** Which agent this is (drivers that register per-agent resources name them after it). */
+  agentId: string;
+  agentName: string;
   /** The binary (empty: the kind's default). */
   command: string;
   cwd: string;

@@ -17,4 +17,5 @@ export * from './secrets.ts';
 export * from './supervisor.ts';
 export * from './drivers/driver.ts';
 export * from './drivers/claude-code.ts';
+export * from './drivers/antigravity.ts';
 export { agentEnv, detectBinary } from './drivers/process.ts';

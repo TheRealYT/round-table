@@ -1,6 +1,8 @@
-// S2b manual check (ADR-0018): the hub runs three real Claude Code agents from one provider, with no
-// chat open anywhere, and they deliver a change to a sample repo. The script only plays the human:
-// sets up the project, starts the agents, approves the plan. Run: node e2e/real-driven.ts
+// S2b manual check (ADR-0018): the hub runs three real agents from one provider, with no chat open
+// anywhere, and they deliver a change to a sample repo. The script only plays the human: sets up
+// the project, starts the agents, approves the plan.
+//   node e2e/real-driven.ts                              # Claude Code
+//   RT_E2E_KIND=antigravity node e2e/real-driven.ts      # Antigravity CLI (agy)
 import { SampleRepo } from '@round-table/testkit';
 import { startHub } from './hub-fixture.ts';
 
@@ -19,7 +21,9 @@ const { projectId } = await human.call<{ projectId: string }>('project.create', 
 await human.call('repo.attach', { projectId, path: repo.path, mainBranch: 'main' });
 await human.call('rules.edit', { projectId, rules: { testCommand: 'sh test.sh', testTimeoutSec: 60 } });
 await human.call('goal.set', { projectId, goal: { objective: 'Change greeting.txt so the greeting reads exactly "hello there".', successCriteria: ['greeting.txt contains exactly the line: hello there', 'sh test.sh passes'] } });
-const { providerId } = await human.call<{ providerId: string }>('provider.save', { settings: { kind: 'claude-code', label: 'Claude Code', command: '', auth: 'cli-login', model: process.env.RT_E2E_MODEL ?? '', extraArgs: [], maxInstances: 3 } });
+const KIND = process.env.RT_E2E_KIND ?? 'claude-code';
+const { providerId } = await human.call<{ providerId: string }>('provider.save', { settings: { kind: KIND, label: KIND, command: process.env.RT_E2E_BIN ?? '', auth: 'cli-login', model: process.env.RT_E2E_MODEL ?? '', extraArgs: [], maxInstances: 3 } });
+log(`provider: ${KIND}`);
 const spawned = await human.call<{ started: Array<{ name: string; agentId: string }>; failed: unknown[] }>('agent.spawn', { projectId, providerId, names: ['Lead', 'Ada', 'Bo'] });
 if (spawned.failed.length) throw new Error(`spawn failed: ${JSON.stringify(spawned.failed)}`);
 const id = Object.fromEntries(spawned.started.map((s) => [s.name, s.agentId]));

@@ -23,6 +23,7 @@ The coding CLIs run headless. S8 showed that Claude Code resumes a session per m
 - **Status is exact:** starting, working, idle, stopped, crashed. Cost and tokens per turn come from the CLI's own report.
 - **Drivers** sit behind one port in `hub` (`Driver`). Workspace preparation (identity file, worktree, MCP command) is a port (`AgentHost`) implemented in `cli`, so `hub` doesn't depend on `agent`.
 - Joining from a chat stays as a fallback for clients without a verified driver.
+- Verified drivers so far: Claude Code (a long-lived stream-json process) and Antigravity CLI (one `agy -p` per message, `--conversation` to continue, per-agent MCP servers via `agy mcp add`).
 
 ## Consequences
 
