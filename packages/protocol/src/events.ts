@@ -1,4 +1,6 @@
-import type { AgentId, PairingId, ProjectId } from './ids.ts';
+import type { AgentId, ChangeRequestId, EntryId, PairingId, ProjectId, RepoId, RequestId, Sha, TaskId, TicketId } from './ids.ts';
+import type { Criticality } from './entry.ts';
+import type { Refs } from './event.ts';
 import type { MessageType, Priority } from './message.ts';
 import type { Durability } from './event.ts';
 
@@ -57,6 +59,65 @@ export interface EventPayloads {
     etaMinutes: number | null;
     handoffNote: string | null;
   };
+  'repo.registered': { repoId: RepoId; path: string; mainBranch: string };
+  'project.repo_attached': { projectId: ProjectId; repoId: RepoId };
+  // ── board (project stream) ──
+  'entry.versioned': {
+    entryId: EntryId;
+    section: string;
+    version: number;
+    supersedes: string | null;
+    author: string;
+    data: unknown;
+    tags: string[];
+    criticality: Criticality;
+    ticketId: TicketId | null;
+    refs: Refs;
+  };
+  'ticket.opened': {
+    ticketId: TicketId;
+    section: string;
+    op: string;
+    data: unknown;
+    baseSeq: number;
+    reason: string;
+    targetId: string | null;
+    proposer: AgentId;
+    quotesHumanMessage: string | null;
+  };
+  'ticket.committed': { ticketId: TicketId; by: AgentId; result: string };
+  'ticket.rejected': { ticketId: TicketId; by: string; reason: string; stale: boolean };
+  'task.created': {
+    taskId: TaskId;
+    title: string;
+    criteria: string[];
+    reviewer: AgentId | null;
+    tester: AgentId | null;
+    deps: TaskId[];
+    capabilities: string[];
+    ticketId: TicketId | null;
+    proposer: string;
+  };
+  'task.status_changed': { taskId: TaskId; from: string; to: string; cause: 'hub_rule' | 'done_rule' | 'human'; reason: string };
+  'task.claimed': { taskId: TaskId; owner: AgentId; branch: string };
+  'task.released': { taskId: TaskId; owner: AgentId; handoffNote: string | null };
+  'change_request.opened': { changeRequestId: ChangeRequestId; taskId: TaskId; repoId: RepoId; branch: string; headSha: Sha; author: AgentId };
+  'change_request.updated': { changeRequestId: ChangeRequestId; headSha: Sha; previous: Sha };
+  'change_request.rebase_needed': { changeRequestId: ChangeRequestId; headSha: Sha; files: string[] };
+  'change_request.merged': { changeRequestId: ChangeRequestId; headSha: Sha; mergeSha: Sha; baseSha: Sha };
+  'request.opened': { requestId: RequestId; kind: 'review' | 'test'; from: AgentId; to: AgentId; changeRequestId: ChangeRequestId; headSha: Sha; body: string | null };
+  'request.closed': { requestId: RequestId; outcome: string; by: AgentId };
+  'review.recorded': { changeRequestId: ChangeRequestId; by: AgentId; verdict: 'approved' | 'changes_needed'; headSha: Sha; notes: string };
+  'test.recorded': { changeRequestId: ChangeRequestId; by: AgentId; status: 'pass' | 'fail'; headSha: Sha; evidence: string };
+  'merge.requested': { changeRequestId: ChangeRequestId; headSha: Sha; repoId: RepoId; testCommand: string; testTimeoutSec: number };
+  'quality.test_run': {
+    changeRequestId: ChangeRequestId;
+    headSha: Sha;
+    status: 'pass' | 'fail' | 'timeout' | 'error' | 'conflict';
+    durationMs: number;
+    outputTail: string;
+    mergeSha: Sha | null;
+  };
   // ── any stream ──
   'timer.scheduled': { timerId: string; dueAt: number; command: { name: string; input: unknown } };
   'timer.cancelled': { timerId: string };
@@ -101,6 +162,26 @@ export const EVENT_DURABILITY: { [K in EventType]: Durability } = {
   'message.sent': 'ephemeral',
   'human.posted': 'durable',
   'activity.reported': 'ephemeral',
+  'repo.registered': 'durable',
+  'project.repo_attached': 'durable',
+  'entry.versioned': 'durable',
+  'ticket.opened': 'durable',
+  'ticket.committed': 'durable',
+  'ticket.rejected': 'durable',
+  'task.created': 'durable',
+  'task.status_changed': 'durable',
+  'task.claimed': 'durable',
+  'task.released': 'durable',
+  'change_request.opened': 'durable',
+  'change_request.updated': 'durable',
+  'change_request.rebase_needed': 'durable',
+  'change_request.merged': 'durable',
+  'request.opened': 'durable',
+  'request.closed': 'durable',
+  'review.recorded': 'durable',
+  'test.recorded': 'durable',
+  'merge.requested': 'durable',
+  'quality.test_run': 'durable',
   'timer.scheduled': 'durable',
   'timer.cancelled': 'durable',
   'timer.fired': 'durable',

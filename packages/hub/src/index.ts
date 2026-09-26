@@ -11,3 +11,5 @@ export * from './internals.ts';
 export { parseCookie } from './gateway.ts';
 export * from './http.ts';
 export * from './keyfile.ts';
+export * from './local-git.ts';
+export * from './merge-reactor.ts';

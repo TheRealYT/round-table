@@ -1,49 +1,37 @@
-import type { ChangeRequestId, RepoId, Sha, TaskId, AgentId } from '@round-table/protocol';
-
-/** A change request: the MVP's stand-in for a PR (ADR-0008). */
-export interface ChangeRequest {
-  id: ChangeRequestId;
-  taskId: TaskId;
-  author: AgentId;
-  repoId: RepoId;
-  branch: string;
-  base: string;
-  headSha: Sha;
-}
+import type { Sha } from '@round-table/protocol';
 
 export type MergeAttempt =
   | { ok: true; mergeSha: Sha; baseSha: Sha; scratchPath: string }
-  | { ok: false; reason: 'conflict'; files: string[] }
+  | { ok: false; reason: 'conflict'; baseSha: Sha; files: string[] }
   | { ok: false; reason: 'missing_ref'; ref: string };
 
-export type RefChange = { repoId: RepoId; ref: string; from: Sha | null; to: Sha | null; worktree: string | null };
-
 /**
- * Git port. The MVP adapter is LocalGitHost (worktrees in the registered repo, scratch area for
- * merges). A GitHub adapter can come later behind the same interface.
+ * Git port (ADR-0008). The MVP adapter is LocalGitHost: the registered repository on disk, agent
+ * worktrees, and scratch worktrees for merges. A GitHub adapter can come later behind the same port.
  */
 export interface GitHost {
-  /** One worktree per agent slot, created by `rt agent install`. */
-  ensureWorktree(repoId: RepoId, slot: string): Promise<{ path: string }>;
-  resolve(repoId: RepoId, ref: string): Promise<Sha | null>;
-  /** Merges `head` into the current `base` in a scratch worktree; nothing is published yet. */
-  mergeInScratch(repoId: RepoId, base: string, head: Sha): Promise<MergeAttempt>;
-  /** Compare-and-swap a ref: moves `ref` to `to` only if it still points at `expected`. */
-  updateRefCas(repoId: RepoId, ref: string, to: Sha, expected: Sha): Promise<boolean>;
-  removeScratch(path: string): Promise<void>;
-  /** The git watcher: calls back on branch, commit and push activity, including agents' worktrees. */
-  watch(repoId: RepoId, onChange: (change: RefChange) => void): () => void;
+  /** The repository's real top-level path, or undefined if `path` is not a git repository. */
+  topLevel(path: string): Promise<string | undefined>;
+  /** Commit sha of a local branch, or null if it does not exist. */
+  resolveBranch(repoPath: string, branch: string): Promise<Sha | null>;
+  /** Branches checked out in any worktree (moving one of them under a checkout leaves that checkout stale). */
+  checkedOutBranches(repoPath: string): Promise<string[]>;
+  /** Merges `headSha` into the current `baseBranch` in a new scratch worktree; nothing is published. */
+  mergeInScratch(repoPath: string, baseBranch: string, headSha: Sha, message: string): Promise<MergeAttempt>;
+  /** Compare-and-swap: moves `refs/heads/<branch>` to `to` only if it still points at `expected`. */
+  updateBranchCas(repoPath: string, branch: string, to: Sha, expected: Sha): Promise<boolean>;
+  removeScratch(repoPath: string, scratchPath: string): Promise<void>;
 }
 
 export interface TestRunResult {
   status: 'pass' | 'fail' | 'timeout' | 'error';
   exitCode: number | null;
   durationMs: number;
-  /** Last lines of combined output, redacted before it is logged. */
+  /** Last lines of combined output. */
   outputTail: string;
 }
 
-/** Runs the project's `rules.test_command` in a directory, for the hub's merge gate (ADR-0009). */
+/** Runs the project's `rules.testCommand` in a directory, for the hub's merge gate (ADR-0009). */
 export interface TestRunner {
   run(options: { cwd: string; command: string; timeoutMs: number; env?: Record<string, string> }): Promise<TestRunResult>;
 }

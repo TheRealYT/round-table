@@ -10,6 +10,7 @@
     "typecheck": "tsc -p . && tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@round-table/protocol": "workspace:*"
+    "@round-table/protocol": "workspace:*",
+    "zod": "^4.6.5"
   }
 }

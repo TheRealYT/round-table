@@ -2,6 +2,7 @@ import { priorityRank, type AgentId, type MessagePayload, type MessageType, type
 import { authorOf, inProject, makeEvent } from '../event.ts';
 import { accept, reject, type CommandHandler, type Decision } from '../module.ts';
 import type { ProjectRecord } from '../model.ts';
+import { startedWork } from './tasks.ts';
 
 type To = 'all' | string | string[];
 
@@ -97,9 +98,11 @@ export const reportActivity: CommandHandler<{
 }> = (model, command, ctx) => {
   const principal = command.principal;
   if (principal.kind !== 'worker' && principal.kind !== 'leader') return reject('forbidden', 'agents only');
-  if (!model.projects[principal.projectId]) return reject('unknown_project', 'no such project');
+  const project = model.projects[principal.projectId];
+  if (!project) return reject('unknown_project', 'no such project');
   const { doing, next, taskId, etaMinutes, handoffNote } = command.input;
   return accept([
+    ...startedWork(ctx, project, principal.agentId, taskId),
     makeEvent(ctx, authorOf(principal), inProject(principal.projectId), 'activity.reported', {
       agentId: principal.agentId,
       doing,

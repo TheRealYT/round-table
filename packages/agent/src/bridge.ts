@@ -83,6 +83,8 @@ export class AgentBridge {
   private handed = new Map<number, Priority>();
   private lastActivityAt: number;
   private briefed = false;
+  /** Last boardVersion relayed to the model (filled into proposals as baseSeq). */
+  private boardVersion: number | undefined;
   private reconnectDelay: number;
 
   constructor(options: BridgeOptions) {
@@ -273,8 +275,17 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
       case 'activity':
         this.lastActivityAt = this.options.now();
         return formatResult(await hub.call(name, args));
-      default:
-        return formatResult(await hub.call(name, args));
+      case 'board_propose': {
+        // D5: the proposal cites the board version the model last read, unless it gave one.
+        const input = args.baseSeq === undefined && this.boardVersion !== undefined ? { ...args, baseSeq: this.boardVersion } : args;
+        return formatResult(await hub.call(name, input));
+      }
+      default: {
+        const out = await hub.call(name, args);
+        const version = (out as { boardVersion?: unknown } | null)?.boardVersion;
+        if (typeof version === 'number') this.boardVersion = version;
+        return formatResult(out);
+      }
     }
   }
 

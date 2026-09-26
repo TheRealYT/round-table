@@ -2,6 +2,10 @@ import type { CommandHandler } from '../module.ts';
 import { send, humanPost, reportActivity } from './messaging.ts';
 import { allowPairing, blockOrigin, denyPairing, expirePairing, expirePairingCode, joinConfirm, joinRequest } from './pairing.ts';
 import { createProject } from './projects.ts';
+import { commit, humanEdit, propose, rejectTicket } from './board.ts';
+import { mergeResult, openRequest, respond } from './changes.ts';
+import { attachRepo } from './repos.ts';
+import { approvePlan, claim, release } from './tasks.ts';
 import { assignLeader, closeSession, markGone, markStale, openSession } from './sessions.ts';
 
 /**
@@ -20,6 +24,19 @@ export const COMMANDS: Record<string, CommandHandler> = {
   send,
   'human.post': humanPost,
   activity: reportActivity,
+  'repo.attach': attachRepo,
+  'goal.set': humanEdit('goal', 'goal'),
+  'rules.edit': humanEdit('rules', 'rules'),
+  'plan.approve': approvePlan,
+  board_propose: propose,
+  board_commit: commit,
+  board_reject: rejectTicket,
+  claim,
+  release,
+  request: openRequest,
+  respond,
+  // internal: merge reactor
+  'merge.result': mergeResult,
   // internal: gateway
   'session.open': openSession,
   'session.closed': closeSession,
@@ -31,6 +48,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
 };
 
 export const INTERNAL_COMMANDS = new Set([
+  'merge.result',
   'session.open',
   'session.closed',
   'pairing.expire',

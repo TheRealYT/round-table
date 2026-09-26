@@ -27,4 +27,9 @@ describe('task state machine', () => {
     expect(canTransition('done', 'ready', 'human')).toBe(true);
     expect(canTransition('cancelled', 'in_progress', 'human')).toBe(false);
   });
+
+  it('sends a task back to review when new commits land after approval', () => {
+    expect(canTransition('in_test', 'in_review', 'hub_rule')).toBe(true);
+    expect(canTransition('in_review', 'in_test', 'hub_rule')).toBe(true);
+  });
 });

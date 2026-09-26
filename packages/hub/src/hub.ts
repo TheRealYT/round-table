@@ -2,6 +2,9 @@ import { DEFAULT_SETTINGS, evolve, initialModel, type Clock, type IdGen, type Mo
 import type { EventPayloads, TransportListener } from '@round-table/protocol';
 import { fingerprint, randomToken, type KeyPair } from '@round-table/protocol/crypto';
 import { Bus } from './command-bus.ts';
+import type { GitHost, TestRunner } from './git.ts';
+import { LocalGitHost, ShellTestRunner } from './local-git.ts';
+import { MergeReactor } from './merge-reactor.ts';
 import { Gateway } from './gateway.ts';
 import { cryptoRandom, systemClock, UlidIds } from './ids.ts';
 import { DEFAULT_HUB_CONFIG, type HubConfig, type HubInternals } from './internals.ts';
@@ -23,6 +26,10 @@ export interface HubOptions {
   config?: Partial<HubConfig>;
   /** Arm real timers. Scenario tests turn this off and call `tick()` after moving a FakeClock. */
   autoTimers?: boolean;
+  /** Git and test adapters (default: local git and a shell test runner). */
+  git?: GitHost;
+  tests?: TestRunner;
+  log?: (message: string) => void;
 }
 
 /** rt-hub: the IO shell around the pure core (architecture §3). */
@@ -32,6 +39,7 @@ export class Hub {
   readonly store: SqliteEventStore;
   readonly bus: Bus;
   readonly scheduler: TimerScheduler;
+  readonly merges: MergeReactor;
   private readonly gateway: Gateway;
   private readonly waiters: Waiters;
   private readonly humanSessions = new Set<string>();
@@ -55,6 +63,7 @@ export class Hub {
     this.bus = new Bus({ store: this.store, model: this.model, ctx: () => ({ now: clock.now(), ids, random, settings }) });
     this.waiters = new Waiters({ coalesceMs: config.coalesceMs });
 
+    const git = options.git ?? new LocalGitHost();
     const internals: HubInternals = {
       hubId: this.hubId,
       hubKey: options.hubKey,
@@ -62,11 +71,15 @@ export class Hub {
       store: this.store,
       bus: this.bus,
       waiters: this.waiters,
+      git,
       clock,
       config,
       pushInbox: (agentId) => this.gateway.pushInbox(agentId),
     };
     this.gateway = new Gateway(internals, new Router(internals), (cookie) => this.humanSessions.has(cookie));
+
+    this.merges = new MergeReactor({ model: this.model, bus: this.bus, git, tests: options.tests ?? new ShellTestRunner(), ...(options.log && { log: options.log }) });
+    this.bus.onCommit((rows) => this.merges.onCommit(rows));
 
     this.scheduler = new TimerScheduler({ clock, auto: options.autoTimers ?? true });
     this.bus.onCommit((rows) => {
@@ -78,6 +91,7 @@ export class Hub {
       }
     });
     this.scheduler.load(Object.values(this.model.timers));
+    this.merges.resumePending();
     // Hub restart: nobody is connected any more. Agents that were get the normal stale/grace
     // timers, so reconnecting within the grace period resumes them (spec: Hub restarts).
     for (const project of Object.values(this.model.projects)) {

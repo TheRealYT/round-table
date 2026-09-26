@@ -9,5 +9,6 @@ export * from './event.ts';
 export * from './events.ts';
 export * from './entry.ts';
 export * from './sections.ts';
+export * from './section-data.ts';
 export * from './procedures.ts';
 export * from './client.ts';

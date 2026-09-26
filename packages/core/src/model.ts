@@ -1,4 +1,5 @@
-import type { AgentId, PairingId, ProjectId } from '@round-table/protocol';
+import type { AgentId, ChangeRequestId, Criticality, EntryId, PairingId, ProjectId, RepoId, RequestId, Sha, TaskId, TicketId } from '@round-table/protocol';
+import type { TaskStatus } from './tasks/status.ts';
 
 /**
  * The in-memory write model: everything `decide` needs to check a command. It is plain JSON
@@ -10,7 +11,14 @@ export interface Model {
   blockedOrigins: Record<string, true>;
   agents: Record<AgentId, AgentRecord>;
   projects: Record<ProjectId, ProjectRecord>;
+  repos: Record<RepoId, RepoRecord>;
   timers: Record<string, TimerRecord>;
+}
+
+export interface RepoRecord {
+  repoId: RepoId;
+  path: string;
+  mainBranch: string;
 }
 
 export type PairingStatus = 'pending' | 'allowed' | 'denied' | 'expired' | 'voided' | 'confirmed';
@@ -74,6 +82,92 @@ export interface ProjectRecord {
   roster: Record<AgentId, RosterEntry>;
   /** Human message ids, so "the human said" quotes can be verified (F6). */
   humanMessages: Record<string, true>;
+  repoId: RepoId | null;
+  /** Bumped by every board change; proposals carry the value they saw as `baseSeq` (D5). */
+  boardVersion: number;
+  entries: Record<EntryId, EntryRecord>;
+  tickets: Record<TicketId, TicketRecord>;
+  tasks: Record<TaskId, TaskRecord>;
+  changeRequests: Record<ChangeRequestId, ChangeRequestRecord>;
+  requests: Record<RequestId, RequestRecord>;
+}
+
+/** Latest version of a document-section entry; older versions live in the log (board_history). */
+export interface EntryRecord {
+  entryId: EntryId;
+  section: string;
+  version: number;
+  author: string;
+  via: 'hub' | 'leader' | 'human';
+  createdAt: number;
+  updatedAt: number;
+  supersedes: string | null;
+  data: unknown;
+  tags: string[];
+  criticality: Criticality;
+  /** boardVersion when this version was written (D5 staleness check). */
+  changedAt: number;
+}
+
+export interface TicketRecord {
+  ticketId: TicketId;
+  section: string;
+  op: string;
+  data: unknown;
+  baseSeq: number;
+  reason: string;
+  targetId: string | null;
+  proposer: AgentId;
+  quotesHumanMessage: string | null;
+  status: 'open' | 'committed' | 'rejected';
+  openedAt: number;
+}
+
+export interface TaskRecord {
+  taskId: TaskId;
+  title: string;
+  criteria: string[];
+  status: TaskStatus;
+  owner: AgentId | null;
+  reviewer: AgentId | null;
+  tester: AgentId | null;
+  deps: TaskId[];
+  capabilities: string[];
+  branch: string | null;
+  changeRequestId: ChangeRequestId | null;
+  handoffNote: string | null;
+  createdAt: number;
+  changedAt: number;
+}
+
+export interface ChangeRequestRecord {
+  changeRequestId: ChangeRequestId;
+  taskId: TaskId;
+  repoId: RepoId;
+  branch: string;
+  author: AgentId;
+  headSha: Sha;
+  status: 'open' | 'merged' | 'rebase_needed';
+  reviews: Array<{ by: AgentId; verdict: 'approved' | 'changes_needed'; headSha: Sha; notes: string; at: number }>;
+  testResults: Array<{ by: AgentId; status: 'pass' | 'fail'; headSha: Sha; evidence: string; at: number }>;
+  hubRuns: Array<{ headSha: Sha; status: 'pass' | 'fail' | 'timeout' | 'error' | 'conflict'; durationMs: number; outputTail: string; at: number }>;
+  /** Head sha a merge was already requested for, so it is requested once per head. */
+  mergeRequestedFor: Sha | null;
+  mergeSha: Sha | null;
+  openedAt: number;
+}
+
+export interface RequestRecord {
+  requestId: RequestId;
+  kind: 'review' | 'test';
+  from: AgentId;
+  to: AgentId;
+  changeRequestId: ChangeRequestId;
+  headSha: Sha;
+  body: string | null;
+  status: 'open' | 'closed';
+  outcome: string | null;
+  openedAt: number;
 }
 
 export interface TimerRecord {
@@ -83,5 +177,5 @@ export interface TimerRecord {
 }
 
 export function initialModel(): Model {
-  return { pairing: {}, blockedOrigins: {}, agents: {}, projects: {}, timers: {} };
+  return { pairing: {}, blockedOrigins: {}, agents: {}, projects: {}, repos: {}, timers: {} };
 }

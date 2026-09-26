@@ -13,7 +13,7 @@ export interface ChangeRequestFacts {
   headSha: Sha;
   reviews: ReadonlyArray<{ by: AgentId; verdict: 'approved' | 'changes_needed'; headSha: Sha }>;
   testResults: ReadonlyArray<{ by: AgentId; status: 'pass' | 'fail'; headSha: Sha }>;
-  hubRuns: ReadonlyArray<{ headSha: Sha; status: 'pass' | 'fail' | 'timeout' | 'error' }>;
+  hubRuns: ReadonlyArray<{ headSha: Sha; status: 'pass' | 'fail' | 'timeout' | 'error' | 'conflict' }>;
 }
 
 export type DoneRuleVerdict =

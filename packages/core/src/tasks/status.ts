@@ -28,7 +28,8 @@ const FORWARD: Record<TaskStatus, readonly TaskStatus[]> = {
   in_progress: ['in_review', 'ready'],
   // changes_needed or a failed hub test run sends work back to in_progress.
   in_review: ['in_test', 'in_progress', 'ready'],
-  in_test: ['done', 'in_progress', 'ready'],
+  // New commits after approval send it back to review; a failed test or hub run back to work.
+  in_test: ['done', 'in_review', 'in_progress', 'ready'],
   done: [],
   // Unblocking returns the task to where it can continue; the module records the pre-block state.
   blocked: ['ready', 'claimed', 'in_progress', 'in_review', 'in_test'],

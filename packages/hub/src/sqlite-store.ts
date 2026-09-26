@@ -114,6 +114,20 @@ export class SqliteEventStore implements EventStore {
       .map(toRow);
   }
 
+  /** Every event of a project about one entity (entry, task, change request, ticket, request), oldest first. */
+  historyOf(projectId: string, id: string, limit = 500): EventRow[] {
+    return this.sql
+      .all<RawRow>(
+        `SELECT * FROM events WHERE project_id = ? AND (
+           json_extract(payload, '$.entryId') = ? OR json_extract(payload, '$.taskId') = ? OR
+           json_extract(payload, '$.changeRequestId') = ? OR json_extract(payload, '$.ticketId') = ? OR
+           json_extract(payload, '$.requestId') = ?)
+         ORDER BY gpos LIMIT ?`,
+        [projectId, id, id, id, id, id, limit],
+      )
+      .map(toRow);
+  }
+
   /** Every event in global order, for loading the write model at startup. */
   *all(batch = 5_000): Generator<EventRow> {
     let after = 0;

@@ -1,6 +1,7 @@
 import type { Clock, Model } from '@round-table/core';
 import type { KeyPair } from '@round-table/protocol/crypto';
 import type { Bus } from './command-bus.ts';
+import type { GitHost } from './git.ts';
 import type { SqliteEventStore } from './sqlite-store.ts';
 import type { Waiters } from './waiters.ts';
 
@@ -12,6 +13,7 @@ export interface HubInternals {
   store: SqliteEventStore;
   bus: Bus;
   waiters: Waiters;
+  git: GitHost;
   clock: Clock;
   config: HubConfig;
   pushInbox(agentId: string): void;
