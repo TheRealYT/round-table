@@ -49,8 +49,7 @@ function AgentCard({ agent, projectId }: { agent: RosterRecord; projectId: strin
         <strong>{agent.name}</strong>
         <span className={`role ${agent.role}`}>{agent.role}</span>
       </div>
-      <StateDot state={agent.state} connected={agent.connected} />
-      <Attention agent={agent} />
+      <AgentStatus agent={agent} />
       <p className="small">
         {agent.activity ? (<><span className="muted">Now:</span> {agent.activity.doing}<br /><span className="muted">Next:</span> {agent.activity.next}</>) : <span className="muted">No activity reported yet.</span>}
       </p>
@@ -64,26 +63,35 @@ function AgentCard({ agent, projectId }: { agent: RosterRecord; projectId: strin
   );
 }
 
-/** An MCP server cannot wake a model: when an agent's model stopped calling tools, the human has to nudge it. */
-const IDLE_AFTER_MS = 90_000;
+/** No tool call for this long (outside wait) means the agent's chat isn't running. */
+const STOPPED_AFTER_MS = 90_000;
 
-function Attention({ agent }: { agent: RosterRecord }) {
+/**
+ * What the agent is doing, not whether its MCP server is connected: in an IDE the server keeps
+ * running after a chat stops. An MCP server cannot wake a model, so a stopped agent needs "continue".
+ */
+function AgentStatus({ agent }: { agent: RosterRecord }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 5_000);
     return () => clearInterval(t);
   }, []);
+  if (!agent.connected || agent.state !== 'active') return <StateDot state={agent.state} connected={agent.connected} />;
   const seen = agent.attention;
-  if (!agent.connected || !seen) return null;
-  if (seen.waiting) return <p className="small muted">Waiting for messages.</p>;
-  const idle = now - seen.lastCallAt;
-  if (idle < IDLE_AFTER_MS) return null;
   const hasWork = agent.next && agent.next.tool !== 'wait';
+  const stopped = !seen || seen.stopped || (!seen.waiting && now - seen.lastCallAt > STOPPED_AFTER_MS);
+  if (!stopped) {
+    return <span className="state ok"><span className="dot" aria-hidden />{seen!.waiting ? 'waiting for messages' : 'working'}</span>;
+  }
   return (
-    <div className={`nudge ${hasWork ? 'urgent' : ''}`} role="status">
-      <strong>Idle {Math.round(idle / 60_000)}m.</strong> Its model stopped calling Round Table tools. Type “continue” in its chat.
-      {hasWork && <div className="small">Work is waiting for it: {agent.next!.step.slice(0, 140)}{agent.next!.step.length > 140 ? '…' : ''}</div>}
-    </div>
+    <>
+      <span className={`state ${hasWork ? 'bad' : 'warn'}`}><span className="dot" aria-hidden />stopped</span>
+      <div className={`nudge ${hasWork ? 'urgent' : ''}`} role="status">
+        {seen ? `No tool call for ${Math.max(1, Math.round((now - seen.lastCallAt) / 60_000))}m: ` : 'Connected but hasn’t started: '}
+        its chat isn’t running. Type “continue” in its chat.
+        {hasWork && <div className="small">Work is waiting for it: {agent.next!.step.slice(0, 140)}{agent.next!.step.length > 140 ? '…' : ''}</div>}
+      </div>
+    </>
   );
 }
 

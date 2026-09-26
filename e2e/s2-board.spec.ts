@@ -85,11 +85,12 @@ test('the app flags an agent whose model stopped calling tools, louder when work
   await page.goto(h.loginUrl());
   await page.locator('.nav-item', { hasText: 'Idle check' }).click();
   const card = page.locator('article.agent', { hasText: 'Ada' });
-  await expect(card.getByText('online')).toBeVisible();
+  await expect(card.getByText('working')).toBeVisible();
   await expect(card.locator('.nudge')).toHaveCount(0);
 
   // Two minutes without a tool call: Ada's next step is real work (propose tasks for the goal).
   await page.clock.fastForward('02:00');
+  await expect(card.locator('.state')).toHaveText('stopped');
   await expect(card.locator('.nudge.urgent')).toContainText('Type “continue” in its chat');
   await expect(card.locator('.nudge')).toContainText('Work is waiting for it');
 });

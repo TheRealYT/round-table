@@ -47,7 +47,7 @@ export interface RosterRecord {
   epoch: number;
   activity: { doing: string; next: string; at: number } | null;
   /** Human view only: when the agent's model last called a Round Table tool, and whether it is inside wait. */
-  attention?: { lastCallAt: number; waiting: boolean } | null;
+  attention?: { lastCallAt: number; waiting: boolean; stopped: boolean } | null;
   /** Human view only: what the Round Table is telling this agent to do next. */
   next?: { tool: string; step: string } | null;
 }

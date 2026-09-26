@@ -35,7 +35,7 @@ test('the human pairs an agent through the app and they exchange messages', asyn
   await page.getByRole('button', { name: 'Done, open project' }).click();
   await expect(page.getByRole('heading', { name: 'Checkout redesign' })).toBeVisible();
   const agentCard = page.locator('article.agent', { hasText: 'Worker A' });
-  await expect(agentCard.getByText('online')).toBeVisible();
+  await expect(agentCard.getByText('working')).toBeVisible();
 
   // Human instruction: delivered at human priority to the agent's wait.
   await page.getByLabel('Instruction').fill('Please start with the cart page.');

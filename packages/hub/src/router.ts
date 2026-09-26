@@ -36,7 +36,7 @@ export class Router {
    * When each agent last called a tool, and whether it is inside wait. Operational state, not
    * events: it shows the human which agents' models stopped (an MCP server cannot wake a model).
    */
-  private readonly attention = new Map<string, { lastCallAt: number; waiting: boolean }>();
+  private readonly attention = new Map<string, { lastCallAt: number; waiting: boolean; stopped: boolean }>();
 
   constructor(hub: HubInternals) {
     this.hub = hub;
@@ -89,6 +89,11 @@ export class Router {
         return { events: types ? rows.filter((r: EventRow) => types.has(r.type)) : rows };
       },
       wait: (session, input: { timeoutMs?: number; ack: number[] }) => this.wait(session, input),
+      'agent.stopped': (session) => {
+        const agent = agentOf(session)!;
+        this.attention.set(agent.agentId, { lastCallAt: hub.clock.now(), waiting: false, stopped: true });
+        return { ok: true };
+      },
       'agent.next': (session) => {
         const agent = agentOf(session)!;
         return nextStep(hub.model, agent.projectId as never, agent.agentId as AgentId);
@@ -149,6 +154,11 @@ export class Router {
     };
   }
 
+  /** An agent's session just opened: rt-agent connects when the model calls a tool (or at startup). */
+  touch(agentId: string): void {
+    this.attention.set(agentId, { lastCallAt: this.hub.clock.now(), waiting: false, stopped: false });
+  }
+
   async handle(session: Session, name: string, rawInput: unknown): Promise<unknown> {
     const def = getProcedure(name);
     if (!def) throw new RpcError('unknown_procedure', `no procedure "${name}"`);
@@ -162,7 +172,8 @@ export class Router {
     if (agent && input.projectId !== undefined && input.projectId !== agent.projectId) {
       throw new RpcError('forbidden', 'agents can only act in their own project');
     }
-    if (agent) this.attention.set(agent.agentId, { lastCallAt: this.hub.clock.now(), waiting: name === 'wait' });
+    // Attention is the model's tool calls; rt-agent's own calls (agent.next, acks) don't count.
+    if (agent && def.mcp) this.attention.set(agent.agentId, { lastCallAt: this.hub.clock.now(), waiting: name === 'wait', stopped: false });
     const special = def.kind === 'query' ? this.queries[name] : this.commands[name];
     if (special) return special(session, input);
     if (def.kind === 'command' && !INTERNAL_COMMANDS.has(name)) return this.dispatch(session, name, input);
@@ -207,7 +218,8 @@ export class Router {
       try {
         await waiters.wait(agent.agentId, timeout);
       } finally {
-        this.attention.set(agent.agentId, { lastCallAt: clock.now(), waiting: false });
+        // A wait whose chat was stopped meanwhile stays marked stopped.
+        if (!this.attention.get(agent.agentId)?.stopped) this.attention.set(agent.agentId, { lastCallAt: clock.now(), waiting: false, stopped: false });
       }
       if (session.fenced) throw new RpcError('fenced', 'this session was replaced by a newer one');
       result = pendingDeliveries(store.reader, agent.agentId, config.waitMaxChars);

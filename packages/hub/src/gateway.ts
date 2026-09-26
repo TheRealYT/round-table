@@ -129,6 +129,7 @@ export class Gateway {
       if (other !== session && agentOf(other)?.agentId === agentId) this.fence(other);
     }
     session.principal = { kind: out.role, agentId: agentId as AgentId, projectId: out.projectId, epoch: out.epoch };
+    this.router.touch(agentId!);
     this.pushInbox(agentId!);
     return out;
   }

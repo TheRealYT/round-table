@@ -149,7 +149,7 @@ function CodeCard({ allowed, onDone }: { allowed: Allowed; onDone: () => void })
 }
 
 export function StateDot({ state, connected }: { state: string | null; connected: boolean }) {
-  const label = state === 'active' ? (connected ? 'online' : 'reconnecting') : (state ?? 'unknown');
+  const label = state === 'active' ? (connected ? 'connected' : 'reconnecting') : (state ?? 'unknown');
   const tone = state === 'active' && connected ? 'ok' : state === 'active' || state === 'stale' ? 'warn' : 'off';
   return <span className={`state ${tone}`}><span className="dot" aria-hidden />{label}</span>;
 }

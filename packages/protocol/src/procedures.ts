@@ -100,6 +100,17 @@ export const PROCEDURES = [
     output: z.object({ tool: z.string(), step: z.string() }),
   }),
   proc({
+    name: 'agent.stopped',
+    // Operational state only (no events), like wait: served by the router, not the bus.
+    kind: 'query',
+    allow: ['worker', 'leader'],
+    stream: 'project',
+    mcp: false,
+    summary: 'rt-agent internal: the client cancelled a tool call (e.g. the human stopped the chat); shown to the human at once.',
+    input: z.object({}),
+    output: z.object({ ok: z.boolean() }),
+  }),
+  proc({
     name: 'session.challenge',
     kind: 'command',
     allow: ['unpaired'],

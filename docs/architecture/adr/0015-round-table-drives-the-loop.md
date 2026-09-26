@@ -25,7 +25,7 @@ An MCP server cannot wake a model whose turn has ended, so each stop needed a hu
   For the leader: the oldest open proposal to commit or reject, then wait. The hub serves this as `agent.next` and as `next` in `board_view('me')`.
 - **Every result ends with it.** rt-agent appends `[Round Table] next: …` plus a loop reminder ("waiting happens inside the wait tool, never by ending your turn") to every Round Table tool result, including errors and empty waits. It puts the human's messages first, and explains the new role when it changes.
 - **Pairing hands over control.** The `join_confirm` result says the chat was only for pairing, not to reply to the chat, and to continue with the next step. Server instructions and the briefing say the same.
-- **Attention for the human.** The hub tracks, in memory, when each agent last called a tool and whether it is inside `wait`. The app shows **Idle** on agents whose model has stopped for 90 s, in red when their next step is real work, with "type continue in its chat".
+- **Attention for the human.** The hub tracks, in memory, when each agent last called a tool and whether it is inside `wait`. When the client cancels a tool call (the human stopped the chat), rt-agent tells the hub at once (`agent.stopped`) and does not count what that call fetched as delivered. Only the model's tool calls count, not rt-agent's own. The app shows the agent's status instead of "online" (an IDE's MCP server outlives its chats): **working**, **waiting for messages**, or **stopped** (cancelled, or 90 s without a tool call outside `wait`), in red when its next step is real work, with "type continue in its chat". While the MCP server is disconnected it shows the connection state (reconnecting, stale, gone).
 - **Setup before pairing** is the recommended order, so agents have work the moment they join. Idle moments are where models stop.
 
 ## Verification (2026-09-26)
@@ -40,4 +40,4 @@ An MCP server cannot wake a model whose turn has ended, so each stop needed a hu
 
 - Role prompts are no longer needed. The `rt demo` README and TRY-IT drop them.
 - Guidance is a product surface: when a slice adds a flow (votes, locks, questions), it adds that flow's steps to `guidance.ts`.
-- IDE limits (turn caps, models that stop when idle for long) remain. The Idle marker makes them visible, and "continue" resumes the agent. `rt supervise` (S4) can do that automatically for CLI clients.
+- IDE limits (turn caps, models that stop when idle for long) remain. The stopped marker makes them visible, and "continue" resumes the agent. `rt supervise` (S4) can do that automatically for CLI clients.

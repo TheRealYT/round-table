@@ -88,3 +88,31 @@ describe('identity by join name, not by config (ADR-0016)', () => {
     expect(await after.call('join_confirm', { code })).toContain('Paired.');
   });
 });
+
+describe('a chat stopped by the human (the client cancels the tool call)', () => {
+  it('shows the agent as stopped, and the message that arrived meanwhile comes again on the next wait', async () => {
+    t = await TestHub.start();
+    const server = await start(new MemoryKeyStore());
+    const { code, projectId } = await allow(await server.call('join_request', { name: 'Ada' }), { newProjectName: 'P' });
+    await server.call('join_confirm', { code });
+    type Seen = { name: string; attention: { waiting: boolean; stopped: boolean } | null };
+    const ada = async () => (await t.human.call<{ records: Seen[] }>('board_read', { section: 'roster', projectId })).records[0]!.attention;
+    expect(await ada()).toMatchObject({ waiting: false, stopped: false });
+
+    const stop = new AbortController();
+    const pending = server.client.callTool({ name: 'wait', arguments: { timeoutMs: 5_000 } }, undefined, { signal: stop.signal });
+    await expect.poll(ada).toMatchObject({ waiting: true });
+    stop.abort();
+    await expect(pending).rejects.toThrow();
+    await expect.poll(ada).toMatchObject({ stopped: true });
+
+    // The hub's wait was still open, so this reaches the cancelled call, which nobody reads.
+    await t.human.call('human.post', { projectId, to: 'all', body: 'are you there?' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await ada()).toMatchObject({ stopped: true });
+
+    // The human types "continue": the next wait gets the message and the agent is running again.
+    expect(await server.call('wait', { timeoutMs: 10 })).toContain('are you there?');
+    expect(await ada()).toMatchObject({ stopped: false });
+  });
+});

@@ -150,7 +150,7 @@ export class AgentBridge {
     const tool = this.server.registerTool(
       def.name,
       { description: TOOL_DESCRIPTIONS[def.name] ?? describe(def), inputSchema: z.object(fields) },
-      async (args: Record<string, unknown>) => this.call(def.name, args),
+      async (args: Record<string, unknown>, extra: { signal: AbortSignal }) => this.call(def.name, args, extra.signal),
     );
     this.tools.set(def.name, tool);
   }
@@ -173,11 +173,11 @@ export class AgentBridge {
     }
   }
 
-  private async call(name: string, rawArgs: Record<string, unknown>) {
+  private async call(name: string, rawArgs: Record<string, unknown>, signal?: AbortSignal) {
     const { as, ...args } = rawArgs;
     const picked = await this.pick(name, args, typeof as === 'string' ? as : undefined);
     if ('error' in picked) return { content: [{ type: 'text' as const, text: `${STATUS_PREFIX} ${name} failed (${picked.error})` }], isError: true };
-    const out = await picked.session.handle(name, args);
+    const out = await picked.session.handle(name, args, signal);
     return { content: [{ type: 'text' as const, text: out.text }], ...(out.isError && { isError: true }) };
   }
 

@@ -96,7 +96,7 @@ Pairing and setup are the same as in path A. Things to know:
 | Tasks | Plan approval by the human, claim and release (workers only), one branch per task | |
 | Change requests | Open, refresh after new commits, review and test requests, verdicts tied to the exact commit | Nobody reviews their own work; the leader never reviews. |
 | Merge gate | The hub merges main + the change in a scratch worktree, runs the test command, and moves main by compare-and-swap | A failing run or a conflict leaves main untouched and sends the task back to the author. |
-| Agent loop | Every tool result carries the next step from the board; agents keep working through tools until told to stop; the app flags idle agents | No role prompts needed. |
+| Agent loop | Every tool result carries the next step from the board; agents keep working through tools until told to stop; each agent card shows what its chat is doing (working, waiting for messages, stopped) | No role prompts needed. |
 | App | Login, Pairing, projects, agents with live state, activity and idle warnings, Setup, task board, change requests, feed, composer | Updates live. |
 | Clients | Claude Code (verified in real sessions); Codex, Gemini CLI, opencode (config verified); Cursor, VS Code (from their docs) | `rt agent install --client …` |
 | Durability | Hub restart keeps everything; agents reconnect and resume; merges that were interrupted resume | |
@@ -122,7 +122,8 @@ Pairing and setup are the same as in path A. Things to know:
 - **Every Round Table tool result ends with `[Round Table] next: …`,** computed by the hub from the board. For a worker the order is: answer a review or test request waiting on you, then work on your own task (implement, open the change request, ask for review and test, fix feedback, rebase), then claim a ready task, then propose tasks for the goal. The leader is told which proposal to commit or reject next. Otherwise the step is "call wait", and waiting happens inside the `wait` tool, never by ending the turn.
 - **All communication goes through the tools:** `send`, `request`, `respond`, `board_propose`. You talk to agents from the app's composer; your messages reach them first.
 - **The loop ends when you (or the leader) say so,** e.g. by posting "please stop" from the composer.
-- **Limits you can't design away:** an MCP server can't wake a model whose turn has ended, and some IDEs pause an agent after a number of tool calls in one turn. If that happens, the app marks the agent **Idle** (in red if work is waiting for it). Type "continue" in that agent's chat.
+- **Agent status:** the card shows what the agent's chat is doing, not whether its MCP server is connected (an IDE keeps the server running after you stop a chat). **working**: it called a tool in the last 90 s. **waiting for messages**: it is inside `wait`. **stopped**: you stopped its chat, or it hasn't called a tool for 90 s. **reconnecting**, **stale** or **gone**: its MCP server lost the hub connection (after an IDE closed, for example). Messages sent while a chat is stopped wait for it and arrive on its next `wait`.
+- **Limits you can't design away:** an MCP server can't wake a model whose turn has ended, and some IDEs pause an agent after a number of tool calls in one turn. If that happens, the app marks the agent **stopped** (in red if work is waiting for it). Type "continue" in that agent's chat.
 
 ## Things worth trying
 
@@ -136,7 +137,7 @@ Pairing and setup are the same as in path A. Things to know:
 ## If something goes wrong
 
 - **"Hub unreachable" in the app, or tools failing with "hub is unreachable":** is `rt hub start` still running? rt-agent reconnects on its own once the hub is back.
-- **An agent stopped, or the app marks it Idle:** type "continue" in its chat. If it keeps stopping right after joining, set the project up before pairing, so it has work straight away.
+- **The app marks an agent stopped:** type "continue" in its chat. If it keeps stopping right after joining, set the project up before pairing, so it has work straight away.
 - **An agent answers you in the chat instead of working:** say "Follow the Round Table's next steps." Its instructions and every tool result tell it the same.
 - **An agent says it isn't paired after a restart:** start the client in the same folder. The identity belongs to the slot (the folder's config), not to the chat.
 - **The login link expired:** run `rt hub login`.

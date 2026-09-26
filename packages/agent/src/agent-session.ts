@@ -138,7 +138,8 @@ export class AgentSession {
   }
 
   /** Runs one tool for this agent and returns the text the model sees. */
-  async handle(name: string, args: Record<string, unknown>): Promise<{ text: string; isError?: boolean }> {
+  /** `signal` aborts when the client cancels the call, e.g. the human stopped the chat. */
+  async handle(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ text: string; isError?: boolean }> {
     try {
       if (this.fenced) throw new HubError('fenced', 'this session was replaced by a newer one with the same identity; stop working in this session');
       const hub = this.hub;
@@ -146,7 +147,7 @@ export class AgentSession {
       if (this.role === 'unpaired' && !['join_request', 'join_confirm', 'rejoin'].includes(name)) {
         throw new HubError('forbidden', this.identity ? 'not connected to the hub yet; try again shortly' : 'not joined yet: call join_request with your name first');
       }
-      const text = await this.dispatch(hub, name, args);
+      const text = await this.dispatch(hub, name, args, signal);
       const parts = [text, await this.statusLine(hub, name), await this.nextLine(hub)];
       if (this.o.briefing && !this.briefed) {
         parts.push(briefing(Math.round(this.o.waitMaxMs / 1000)));
@@ -154,6 +155,8 @@ export class AgentSession {
       }
       return { text: parts.filter(Boolean).join('\n\n') };
     } catch (error) {
+      // Cancelled: nobody reads this result, so don't touch the hub again.
+      if (signal?.aborted) return { text: `${STATUS_PREFIX} ${name} cancelled`, isError: true };
       const e = error instanceof HubError ? error : new HubError('internal', errorText(error));
       const reason = e.rejection ? `${e.rejection}: ${e.message}` : `${e.code}: ${e.message}`;
       const next = this.hub && !this.fenced ? await this.nextLine(this.hub).catch(() => '') : '';
@@ -161,7 +164,7 @@ export class AgentSession {
     }
   }
 
-  private async dispatch(hub: HubClient, name: string, args: Record<string, unknown>): Promise<string> {
+  private async dispatch(hub: HubClient, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
     switch (name) {
       case 'join_request': {
         if (this.identity) {
@@ -194,7 +197,7 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
         return `Rejoined as ${this.identity?.agentId} (${this.role}).`;
       case 'wait': {
         const timeoutMs = Math.min(typeof args.timeoutMs === 'number' ? args.timeoutMs : this.o.waitMaxMs, this.o.waitMaxMs);
-        const out = await this.fetch(hub, { ...args, timeoutMs });
+        const out = await this.fetch(hub, { ...args, timeoutMs }, signal);
         return formatItems(out.items, out.more);
       }
       case 'activity':
@@ -215,8 +218,22 @@ They will check it in the Round Table app, click Allow, and paste an 8-character
   }
 
   /** One wait round trip: acks what the model already has, records what it hands over now. */
-  private async fetch(hub: HubClient, args: Record<string, unknown>): Promise<{ items: WaitItem[]; more: number }> {
-    const out = await hub.call<{ items: WaitItem[]; more: number }>('wait', { ...args, ack: [...this.handed.keys()] });
+  private async fetch(hub: HubClient, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ items: WaitItem[]; more: number }> {
+    // The chat was stopped while waiting: tell the hub at once, so the human sees the agent stopped.
+    const onAbort = () => void hub.call('agent.stopped').catch(() => undefined);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    let out: { items: WaitItem[]; more: number };
+    try {
+      out = await hub.call<{ items: WaitItem[]; more: number }>('wait', { ...args, ack: [...this.handed.keys()] });
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
+    if (signal?.aborted) {
+      // Nobody will read this result: don't count its messages as delivered; the hub sends them again.
+      this.handed = new Map();
+      this.handedHuman = false;
+      throw new HubError('internal', 'cancelled');
+    }
     this.handed = new Map(out.items.map((i) => [i.deliveryId, i.priority as Priority]));
     this.handedHuman = out.items.some((i) => i.role === 'human');
     return out;
