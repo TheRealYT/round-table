@@ -79,6 +79,11 @@ export interface LiveState {
 /** Human view of a hub-run agent (ADR-0018), on roster records. */
 export interface DrivenInfo {
   providerId: string;
+  /** The provider's CLI kind (for its logo). */
+  kind: string | null;
+  /** The agent's own model and effort; empty: the provider's or its role's default. */
+  model: string;
+  effort: string;
   run: boolean;
   turns: number;
   costUsd: number;
@@ -97,6 +102,9 @@ export interface ProviderKindDef {
   install: string;
   driverVerified: boolean;
   models: readonly string[];
+  listModels?: readonly string[];
+  efforts: readonly string[];
+  dynamicTools: boolean;
   envHints: readonly string[];
 }
 
@@ -106,6 +114,7 @@ export interface ProviderSettings {
   command: string;
   auth: 'cli-login' | 'api-key';
   model: string;
+  effort: string;
   extraArgs: string[];
   maxInstances: number;
   env: Array<{ name: string; value: string }>;

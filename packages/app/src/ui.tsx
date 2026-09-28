@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Check, CircleX, Crown, Moon, Monitor, Sun, X } from 'lucide-react';
 import type { LiveState, RosterRecord, RunStatus } from './types.ts';
 import { toolName } from './format.ts';
+import { LOGOS } from './logos.ts';
 
 // ── status ─────────────────────────────────────────────────────────────────────────────
 
@@ -192,5 +193,18 @@ export function TaskProgress({ counts }: { counts: Record<string, number> }) {
     <div className="progress" role="img" aria-label={TASK_COLUMNS.filter((c) => counts[c]).map((c) => `${counts[c]} ${c.replace('_', ' ')}`).join(', ')}>
       {TASK_COLUMNS.filter((c) => counts[c]).map((c) => <i key={c} style={{ width: `${(100 * (counts[c] ?? 0)) / total}%`, background: TASK_COLOR[c] }} />)}
     </div>
+  );
+}
+
+// ── provider logos ─────────────────────────────────────────────────────────────────────
+
+/** The CLI's brand mark (see logos.ts), or a letter mark when it has none. */
+export function ProviderLogo({ kind, size }: { kind: string; size?: 'sm' | 'xs' }) {
+  const logo = LOGOS[kind];
+  const letters: Record<string, string> = { codex: 'CX' };
+  return (
+    <span className={`logo ${kind} ${size ?? ''}`} aria-hidden style={logo ? ({ '--brand': logo.hex } as CSSProperties) : undefined}>
+      {logo ? <svg viewBox="0 0 24 24"><path d={logo.path} /></svg> : (letters[kind] ?? kind.slice(0, 2).toUpperCase())}
+    </span>
   );
 }

@@ -7,10 +7,8 @@ import { Sheet, useToast } from '../ui.tsx';
 
 const NAMES = ['Ada', 'Bo', 'Cy', 'Dee', 'Eli', 'Fay', 'Gus', 'Hal', 'Ivy', 'Jo', 'Kit', 'Lu', 'Max', 'Nia', 'Oz', 'Pia', 'Quin', 'Rae', 'Sol', 'Tam'];
 
-export function ProviderLogo({ kind }: { kind: string }) {
-  const text: Record<string, string> = { 'claude-code': 'CC', antigravity: 'AG', codex: 'CX', cursor: 'CU', opencode: 'OC' };
-  return <span className={`logo ${kind}`} aria-hidden>{text[kind] ?? kind.slice(0, 2).toUpperCase()}</span>;
-}
+import { ProviderLogo } from '../ui.tsx';
+export { ProviderLogo };
 
 /** Start agents from a provider into a project: pick both, then name one agent per seat. */
 export function StartAgentsSheet({ open, onClose, projectId: fixedProject, providerId: fixedProvider }: { open: boolean; onClose: () => void; projectId?: string; providerId?: string }) {
@@ -36,9 +34,19 @@ export function StartAgentsSheet({ open, onClose, projectId: fixedProject, provi
     const suggested = NAMES.filter((n) => !taken.has(n.toLowerCase())).slice(0, Math.min(3, Math.max(1, free)));
     setNames(suggested);
   }, [open, projectId, providerId, roster?.records.length, free]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The first agent leads when the project has no leader yet, so its first turn plans.
+  const hasLeader = (roster?.records ?? []).some((r) => r.role === 'leader' && r.state !== 'removed' && r.state !== 'left');
+  const [leader, setLeader] = useState<string>('');
+  const [model, setModel] = useState('');
+  const [effort, setEffort] = useState('');
+  useEffect(() => {
+    setModel('');
+    setEffort('');
+  }, [open, providerId]);
   const [spawn, spawning, error] = useCommand<{ started: Array<{ name: string }>; failed: Array<{ name: string; error: string }> }>('agent.spawn');
   const toast = useToast();
   const list = names.map((n) => n.trim()).filter(Boolean);
+  const leaderName = hasLeader ? '' : leader === '-' ? '' : list.includes(leader) ? leader : list.length > 1 ? list[0]! : '';
   const setCount = (n: number) => {
     const count = Math.max(1, Math.min(10, n));
     const pool = NAMES.filter((x) => !taken.has(x.toLowerCase()) && !names.includes(x));
@@ -57,7 +65,7 @@ export function StartAgentsSheet({ open, onClose, projectId: fixedProject, provi
             className="primary"
             disabled={spawning || !provider || !projectId || list.length === 0}
             onClick={async () => {
-              const out = await spawn({ projectId, providerId, names: list, tags: [] });
+              const out = await spawn({ projectId, providerId, names: list, tags: [], ...(leaderName && { leader: leaderName }), ...(model.trim() && { model: model.trim() }), ...(effort && { effort }) });
               if (!out) return;
               if (out.started.length) toast(`Started ${out.started.map((s) => s.name).join(', ')}`);
               for (const f of out.failed) toast(`${f.name}: ${f.error}`, true);
@@ -122,8 +130,37 @@ export function StartAgentsSheet({ open, onClose, projectId: fixedProject, provi
                 </span>
               ))}
             </div>
-            <span className="hint">Each gets its own git worktree of the project’s repository. Make one of them the leader from the table.</span>
+            <span className="hint">Each gets its own git worktree of the project’s repository.</span>
           </div>
+          {!hasLeader && list.length > 1 && (
+            <div className="field">
+              <label htmlFor={`${id}-leader`}>Leader</label>
+              <select id={`${id}-leader`} value={leaderName || '-'} onChange={(e) => setLeader(e.target.value)}>
+                {list.map((n) => <option key={n} value={n}>{n} plans and coordinates</option>)}
+                <option value="-">No leader: workers propose tasks themselves</option>
+              </select>
+              <span className="hint">The leader plans the goal in its first turn and commits the whole plan at once; it doesn’t write code.</span>
+            </div>
+          )}
+          {kind && (
+            <div className="grid-2">
+              <div className="field">
+                <label htmlFor={`${id}-model`}>Model</label>
+                <input id={`${id}-model`} className="mono-input" list={`${id}-models`} value={model} placeholder={provider?.settings.model || 'provider’s default'} onChange={(e) => setModel(e.target.value)} />
+                <datalist id={`${id}-models`}>{kind.models.map((m) => <option key={m} value={m} />)}</datalist>
+              </div>
+              {kind.efforts.length > 0 && (
+                <div className="field">
+                  <label htmlFor={`${id}-effort`}>Effort</label>
+                  <select id={`${id}-effort`} value={effort} onChange={(e) => setEffort(e.target.value)}>
+                    <option value="">{provider?.settings.effort ? `provider’s (${provider.settings.effort})` : 'provider’s default'}</option>
+                    {kind.efforts.map((x) => <option key={x} value={x}>{x}</option>)}
+                  </select>
+                </div>
+              )}
+              <span className="hint" style={{ gridColumn: '1 / -1' }}>Empty: the provider’s, or the role’s default from Settings. You can change each agent later from the table.</span>
+            </div>
+          )}
           {kind && !kind.driverVerified && <p className="nudge">This CLI can’t be run by the hub yet.</p>}
           {error && <p className="error">{error}</p>}
         </>

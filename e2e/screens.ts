@@ -22,7 +22,7 @@ await human.call('rules.edit', { projectId, rules: { testCommand: 'npm test' } }
 await human.call('goal.set', { projectId, goal: { objective: 'Move the cart to a single page with inline address validation.' } });
 const { providerId } = await human.call<{ providerId: string }>('provider.save', { settings: { kind: 'claude-code', label: 'Claude Code', command: '', auth: 'cli-login', model: 'sonnet', extraArgs: [], maxInstances: 4 } });
 await human.call('provider.save', { settings: { kind: 'codex', label: 'Codex', command: '', auth: 'api-key', model: '', extraArgs: [], maxInstances: 2 } });
-const { started } = await human.call<{ started: Array<{ name: string; agentId: string }> }>('agent.spawn', { projectId, providerId, names: ['Lead', 'Ada', 'Bo'] });
+const { started } = await human.call<{ started: Array<{ name: string; agentId: string }> }>('agent.spawn', { projectId, providerId, names: ['Lead', 'Ada', 'Bo'], leader: 'Lead' });
 const id = Object.fromEntries(started.map((s) => [s.name, s.agentId]));
 await human.call('leader.assign', { projectId, agentId: id.Lead });
 await sleep(100);
@@ -83,7 +83,7 @@ proc('Bo').emit({ type: 'exit', code: 1, error: 'API Error: 529 overloaded' });
 await sleep(50);
 
 const browser = await chromium.launch(existsSync(CHROMIUM) ? { executablePath: CHROMIUM } : {});
-const shots: Array<[string, string]> = [['overview', '#/overview'], ['agents', '#/agents'], ['project', `#/project/${encodeURIComponent(projectId)}/table`], ['board', `#/project/${encodeURIComponent(projectId)}/board`], ['pairing', '#/pairing']];
+const shots: Array<[string, string]> = [['overview', '#/overview'], ['agents', '#/agents'], ['project', `#/project/${encodeURIComponent(projectId)}/table`], ['board', `#/project/${encodeURIComponent(projectId)}/board`], ['insights', `#/project/${encodeURIComponent(projectId)}/insights`], ['setup', `#/project/${encodeURIComponent(projectId)}/setup`], ['settings', '#/settings'], ['pairing', '#/pairing']];
 for (const scheme of ['dark', 'light'] as const) {
   for (const [w, hgt, label] of [[1440, 1000, 'desktop'], [390, 844, 'mobile']] as const) {
     const context = await browser.newContext({ viewport: { width: w, height: hgt }, colorScheme: scheme });

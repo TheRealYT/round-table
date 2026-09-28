@@ -12,7 +12,8 @@ test.afterEach(async () => h.close());
 
 test('the human pairs an agent through the app and they exchange messages', async ({ page }) => {
   await page.goto(h.loginUrl());
-  await page.locator('.nav-item', { hasText: 'Pairing' }).click();
+  // Pairing shows in the sidebar only while a request waits; the page is always at #/pairing.
+  await page.evaluate(() => { location.hash = '#/pairing'; });
   await expect(page.getByRole('heading', { name: 'Pairing' })).toBeVisible();
   await expect(page.getByText('No agents are waiting')).toBeVisible();
 
@@ -36,7 +37,8 @@ test('the human pairs an agent through the app and they exchange messages', asyn
   await page.getByRole('button', { name: 'Done, open project' }).click();
   await expect(page.getByRole('heading', { name: 'Checkout redesign' })).toBeVisible();
   await page.getByRole('tab', { name: /Table/ }).click();
-  await page.getByRole('button', { name: /Conversation/ }).click();
+  // The conversation panel is open beside the page on a wide screen.
+  await expect(page.getByRole('complementary', { name: 'Conversation' })).toBeVisible();
   const agentCard = page.locator('article.agent', { hasText: 'Worker A' });
   await expect(agentCard.getByText('working')).toBeVisible();
 
@@ -61,7 +63,8 @@ test('the human pairs an agent through the app and they exchange messages', asyn
 
 test('a new chat asking to continue as a paired agent needs the human, and stays that agent', async ({ page }) => {
   await page.goto(h.loginUrl());
-  await page.locator('.nav-item', { hasText: 'Pairing' }).click();
+  // Pairing shows in the sidebar only while a request waits; the page is always at #/pairing.
+  await page.evaluate(() => { location.hash = '#/pairing'; });
   const first = await h.agent();
   const pending = await requestJoin(first, { name: 'Ada', client: 'scripted' });
   const card = page.locator('article.request', { hasText: pending.request.matchPhrase });
@@ -70,7 +73,8 @@ test('a new chat asking to continue as a paired agent needs the human, and stays
   const code = (await page.getByTestId('pairing-code').textContent())?.trim() ?? '';
   const identity = await confirmJoin(first, pending, code, Date.now());
   await page.getByRole('button', { name: 'Done, open project' }).click();
-  await page.locator('.nav-item', { hasText: 'Pairing' }).click();
+  // Pairing shows in the sidebar only while a request waits; the page is always at #/pairing.
+  await page.evaluate(() => { location.hash = '#/pairing'; });
 
   // Another chat, same key (the IDE's shared rt-agent), asks to be Ada.
   const second = await h.agent();

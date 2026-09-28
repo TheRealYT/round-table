@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useId, type ReactNode } from 'react';
 import { HubError } from '@round-table/protocol';
-import { Bot, ChevronRight, CircleCheck, CircleX, Cpu, FolderGit2, KeyRound, Pencil, Plus, Rocket, Square, Play, RotateCcw, Terminal, Trash2, Variable, Zap } from 'lucide-react';
+import { Bot, ChevronRight, CircleCheck, CircleX, Cpu, FolderGit2, KeyRound, List, Pencil, Plus, Rocket, Square, Play, RotateCcw, Terminal, Trash2, Variable, Zap } from 'lucide-react';
 import { go } from '../App.tsx';
 import { useCommand, useHub, useQuery } from '../hub.tsx';
 import { duration, usd } from '../format.ts';
@@ -96,7 +96,10 @@ function AddProviderSheet({ open, onClose, kinds, initial }: { open: boolean; on
 
 function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKindDef; provider?: ProviderRecord; onSaved: () => void; onCancel: () => void }) {
   const id = useId();
-  const initial: ProviderSettings = { kind: kind.kind, label: kind.label, command: '', auth: 'cli-login', model: '', extraArgs: [], maxInstances: 3, env: [], secretEnv: [], ...provider?.settings };
+  const initial: ProviderSettings = { kind: kind.kind, label: kind.label, command: '', auth: 'cli-login', model: '', effort: '', extraArgs: [], maxInstances: 3, env: [], secretEnv: [], ...provider?.settings };
+  const [listed, setListed] = useState<string[]>([]);
+  const [listing, setListing] = useState<string | null>(null);
+  const client = useHub();
   const [s, setS] = useState(initial);
   const [args, setArgs] = useState(initial.extraArgs.join(' '));
   const [key, setKey] = useState('');
@@ -142,9 +145,42 @@ function ProviderForm({ kind, provider, onSaved, onCancel }: { kind: ProviderKin
         </div>
         <div className="field">
           <label htmlFor={`${id}-model`}>Model</label>
-          <input id={`${id}-model`} list={`${id}-models`} value={s.model} placeholder="CLI default" onChange={(e) => setS({ ...s, model: e.target.value })} />
-          <datalist id={`${id}-models`}>{kind.models.map((m) => <option key={m} value={m} />)}</datalist>
+          <div className="row" style={{ flexWrap: 'nowrap' }}>
+            <input id={`${id}-model`} className="mono-input" list={`${id}-models`} value={s.model} placeholder="CLI default" onChange={(e) => setS({ ...s, model: e.target.value })} />
+            {kind.listModels && provider && (
+              <button
+                type="button"
+                className="sm"
+                title={`Ask ${kind.binary} which models it offers`}
+                onClick={async () => {
+                  setListing('Asking…');
+                  try {
+                    if (!client) throw new Error('not connected to the hub');
+                    const out = await client.call<{ models: string[]; error: string | null }>('provider.models', { providerId: provider.providerId });
+                    setListed(out.models);
+                    setListing(out.models.length ? `${out.models.length} models from ${kind.binary}` : out.error ?? 'none listed');
+                  } catch (error) {
+                    setListing(error instanceof Error ? error.message : String(error));
+                  }
+                }}
+              >
+                <List /> List
+              </button>
+            )}
+          </div>
+          <datalist id={`${id}-models`}>{[...new Set([...listed, ...kind.models])].map((m) => <option key={m} value={m} />)}</datalist>
+          <span className="hint">{listing ?? (kind.models.length ? `e.g. ${kind.models.join(', ')}` : 'Any name the CLI accepts.')}</span>
         </div>
+        {kind.efforts.length > 0 && (
+          <div className="field">
+            <label htmlFor={`${id}-effort`}>Effort</label>
+            <select id={`${id}-effort`} value={s.effort} onChange={(e) => setS({ ...s, effort: e.target.value })}>
+              <option value="">CLI default</option>
+              {kind.efforts.map((x) => <option key={x} value={x}>{x}</option>)}
+            </select>
+            <span className="hint">How hard the model thinks. Lower is faster and cheaper; each agent or role can change it.</span>
+          </div>
+        )}
         <div className="field">
           <label htmlFor={`${id}-max`}>Agents at once</label>
           <input id={`${id}-max`} type="number" min={1} max={20} value={s.maxInstances} onChange={(e) => setS({ ...s, maxInstances: Math.max(1, Math.min(20, Number(e.target.value) || 1)) })} />
@@ -322,7 +358,7 @@ function ProviderCard({ provider, kind, projects, canRun, onStart }: { provider:
         <div>
           <dl className="kv">
             <dt><Terminal /> Binary</dt><dd className="mono">{s.command || kind.binary}</dd>
-            <dt><Cpu /> Model</dt><dd>{s.model || <span className="faint">CLI default</span>}</dd>
+            <dt><Cpu /> Model</dt><dd>{s.model || <span className="faint">CLI default</span>}{s.effort && <span className="faint"> · effort {s.effort}</span>}</dd>
             <dt><Bot /> Running</dt><dd className="num">{provider.running} of {s.maxInstances}</dd>
             {s.extraArgs.length > 0 && (<><dt>Arguments</dt><dd className="mono xs">{s.extraArgs.join(' ')}</dd></>)}
             {!detect.data?.found && detect.data && <><dt>Install</dt><dd><code>{kind.install}</code> <button className="link xs" onClick={() => void detect.run()}>Recheck</button></dd></>}

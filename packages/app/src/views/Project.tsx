@@ -1,18 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   Activity, ArrowRight, Gauge, Bot, CircleAlert, Coins, Cpu, FlaskConical, FolderGit2, GitMerge, GitPullRequest, KeyRound, LayoutGrid,
-  ListChecks, MessageSquare, Pause, Play, Radio, RotateCcw, Send, Settings2, Sparkles, Square, Terminal, UserPlus, Users, Wrench,
+  ListChecks, MessageSquare, PanelRightClose, Pause, Play, Radio, RotateCcw, Send, Settings2, SlidersHorizontal, Sparkles, Square, Terminal, UserPlus, Users, Wrench, Crown,
 } from 'lucide-react';
 import { go } from '../App.tsx';
 import { useCommand, useQuery } from '../hub.tsx';
 import { clock, shortId, tokens, toolName, usd } from '../format.ts';
-import type { LogEvent, ProjectSummary, RosterRecord } from '../types.ts';
-import { Avatar, RunState, SEAT_LABEL, seatOf, Sparkline, STOPPED_AFTER_MS, TASK_COLOR, TASK_COLUMNS, TaskProgress, useNow, useToast, type Seat } from '../ui.tsx';
+import type { LogEvent, ProjectSummary, ProviderList, RosterRecord } from '../types.ts';
+import { ProviderLogo, Avatar, RunState, SEAT_LABEL, seatOf, Sparkline, STOPPED_AFTER_MS, TASK_COLOR, TASK_COLUMNS, TaskProgress, useNow, useToast, type Seat } from '../ui.tsx';
 import { ChangesTable, Kanban, SetupPanel, setupComplete, type BoardOverview, type Change } from './Board.tsx';
 import { StateDot } from './Pairing.tsx';
 import { StartAgentsSheet } from './StartAgents.tsx';
 import { AgentLog } from './AgentLog.tsx';
 import { InsightsTab } from './Insights.tsx';
+import { SettingsForm } from './Settings.tsx';
 
 const FEED_TYPES = [
   'human.posted', 'message.sent', 'roster.joined', 'roster.connected', 'roster.disconnected',
@@ -29,16 +30,14 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
   const { data: changes } = useQuery<{ records: Change[] }>('board_read', { section: 'artifacts', projectId, limit: 50 });
   const { data: log } = useQuery<{ events: LogEvent[] }>('logs.query', { projectId, filter: { last: true, types: FEED_TYPES }, limit: 400 });
   const [starting, setStarting] = useState(false);
-  // The conversation sits beside the tabs on wide screens; on narrower ones it opens on demand.
-  const [chatOpen, setChatOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1600);
+  const chat = useChatPanel();
   const [approve, approving] = useCommand('plan.approve');
   const toast = useToast();
-  const agents = useMemo(() => (roster?.records ?? []).filter((a) => a.state !== 'removed' && a.state !== 'left'), [roster]);
+  const agents = useMemo(() => (roster?.records ?? []).filter((a) => a.state !== 'removed' && a.state !== 'left').sort(leaderFirst), [roster]);
   const names = new Map(agents.map((a) => [a.agentId, a.name]));
   const name = (id: string | null) => (id ? names.get(id) ?? shortId(id) : '—');
   const events = log?.events ?? [];
   const cost = agents.reduce((n, a) => n + (a.driven?.costUsd ?? 0), 0);
-  const messages = events.filter((e) => e.type === 'message.sent' || e.type === 'human.posted').length;
   const complete = view ? setupComplete(view) : true;
   const tab: Tab = (['table', 'board', 'changes', 'activity', 'insights', 'setup'] as const).includes(routeTab as Tab) ? (routeTab as Tab) : 'table';
   const [defaulted, setDefaulted] = useState(false);
@@ -59,80 +58,139 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
     { id: 'insights', label: 'Insights', icon: <Gauge /> },
     { id: 'setup', label: 'Setup', icon: <Settings2 />, dot: !complete },
   ];
+  const lastSeen = useRef(0);
+  const messages = events.filter((e) => e.type === 'message.sent' || e.type === 'human.posted');
+  if (chat.open) lastSeen.current = messages.length;
+  const unread = Math.max(0, messages.length - lastSeen.current);
 
   return (
-    <div className="page">
-      <header className="project-hero">
-        <div style={{ minWidth: 0 }}>
-          <div className="eyebrow row faint small" style={{ gap: 6, marginBottom: 'var(--s-2)' }}><FolderGit2 size={14} /> Project</div>
-          <h1>{project.name}</h1>
-          {view?.goal ? <p className="goal">{String(view.goal.data.objective ?? '')}</p> : <p className="goal muted">No goal yet — set one under Setup and every agent is told at once.</p>}
-          <div className="facts">
-            <span className="badge"><Users /> {agents.length} agent{agents.length === 1 ? '' : 's'}</span>
-            {view?.project.repo && <span className="badge" title={view.project.repo}><FolderGit2 /> <span className="mono">{view.project.repo.split('/').slice(-2).join('/')}</span></span>}
-            {view?.rules?.data.testCommand ? <span className="badge"><FlaskConical /> <span className="mono">{String(view.rules.data.testCommand)}</span></span> : null}
-            {cost > 0 && <span className="badge"><Coins /> <span className="num">{usd(cost)}</span></span>}
-            {(view?.openTickets ?? 0) > 0 && <span className="badge accent"><ListChecks /> {view!.openTickets} proposal{view!.openTickets === 1 ? '' : 's'} waiting for the leader</span>}
+    <div className={`project-shell ${chat.open ? 'with-chat' : ''}`} style={chat.open ? ({ '--chat-w': `${chat.width}px` } as CSSProperties) : undefined}>
+      <div className="page project-page">
+        <header className="project-hero">
+          <div style={{ minWidth: 0 }}>
+            <div className="eyebrow row faint small" style={{ gap: 6, marginBottom: 'var(--s-2)' }}><FolderGit2 size={14} /> Project</div>
+            <h1>{project.name}</h1>
+            {view?.goal ? <p className="goal">{String(view.goal.data.objective ?? '')}</p> : <p className="goal muted">No goal yet — set one under Setup and every agent is told at once.</p>}
+            <div className="facts">
+              <span className="badge"><Users /> {agents.length} agent{agents.length === 1 ? '' : 's'}</span>
+              {view?.project.repo && <span className="badge" title={view.project.repo}><FolderGit2 /> <span className="mono">{view.project.repo.split('/').slice(-2).join('/')}</span></span>}
+              {view?.rules?.data.testCommand ? <span className="badge"><FlaskConical /> <span className="mono">{String(view.rules.data.testCommand)}</span></span> : null}
+              {cost > 0 && <span className="badge"><Coins /> <span className="num">{usd(cost)}</span></span>}
+              {(view?.openTickets ?? 0) > 0 && <span className="badge accent"><ListChecks /> {view!.openTickets} proposal{view!.openTickets === 1 ? '' : 's'} waiting for the leader</span>}
+            </div>
           </div>
-        </div>
-        <div className="row">
-          {proposed > 0 && (
-            <button className="primary" disabled={approving} onClick={async () => { if (await approve({ projectId })) toast('Plan approved: tasks are ready to claim'); }}>
-              <ListChecks /> Approve plan ({proposed} proposed)
+          <div className="row hero-actions">
+            {proposed > 0 && (
+              <button className="primary" disabled={approving} onClick={async () => { if (await approve({ projectId })) toast('Plan approved: tasks are ready to claim'); }}>
+                <ListChecks /> Approve plan ({proposed} proposed)
+              </button>
+            )}
+            <button className={proposed > 0 ? '' : 'primary'} onClick={() => setStarting(true)}><UserPlus /> Start agents</button>
+            {!chat.open && (
+              <button onClick={() => chat.setOpen(true)} title="Open the conversation">
+                <MessageSquare /> Conversation{unread > 0 && <span className="count-badge hot">{unread}</span>}
+              </button>
+            )}
+          </div>
+        </header>
+
+        {view && view.tasks.length > 0 && (
+          <div className="progress-block">
+            <TaskProgress counts={view.taskCounts} />
+            <div className="legend">
+              {TASK_COLUMNS.filter((c) => view.taskCounts[c]).map((c) => <span key={c}><i style={{ background: TASK_COLOR[c] }} />{view.taskCounts[c]} {c.replace('_', ' ')}</span>)}
+            </div>
+          </div>
+        )}
+
+        <div className="tabs" role="tablist" aria-label="Project">
+          {tabs.map((t) => (
+            <button key={t.id} role="tab" className="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}>
+              {t.icon}{t.label}
+              {t.count ? <span className="count-badge">{t.count}</span> : null}
+              {t.dot && <span className="pill-dot" style={{ background: 'var(--accent)' }} aria-label="needs setup" />}
             </button>
-          )}
-          <button className={proposed > 0 ? '' : 'primary'} onClick={() => setStarting(true)}><UserPlus /> Start agents</button>
+          ))}
         </div>
-      </header>
 
-      {view && view.tasks.length > 0 && (
-        <div className="progress-block">
-          <TaskProgress counts={view.taskCounts} />
-          <div className="legend">
-            {TASK_COLUMNS.filter((c) => view.taskCounts[c]).map((c) => <span key={c}><i style={{ background: TASK_COLOR[c] }} />{view.taskCounts[c]} {c.replace('_', ' ')}</span>)}
-          </div>
-        </div>
-      )}
-
-      <div className="tabs" role="tablist" aria-label="Project">
-        {tabs.map((t) => (
-          <button key={t.id} role="tab" className="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}>
-            {t.icon}{t.label}
-            {t.count ? <span className="count-badge">{t.count}</span> : null}
-            {t.dot && <span className="pill-dot" style={{ background: 'var(--accent)' }} aria-label="needs setup" />}
-          </button>
-        ))}
-        <span className="spacer" />
-        <button className={`tab ${chatOpen ? '' : 'accent-tab'}`} aria-pressed={chatOpen} onClick={() => setChatOpen(!chatOpen)} title={chatOpen ? 'Hide the conversation' : 'Show the conversation'}>
-          <MessageSquare />Conversation{!chatOpen && messages > 0 ? <span className="count-badge hot">{messages}</span> : null}
-        </button>
-      </div>
-
-      <div className={`project-layout ${chatOpen ? '' : 'solo'}`}>
-        <div style={{ minWidth: 0 }} role="tabpanel">
-          {tab === 'table' && <TableTab projectId={projectId} agents={agents} events={events} cost={cost} onStart={() => setStarting(true)} />}
+        <div role="tabpanel" style={{ minWidth: 0 }}>
+          {tab === 'table' && <TableTab projectId={projectId} agents={agents} events={events} cost={cost} view={view} onStart={() => setStarting(true)} />}
           {tab === 'board' && view && <Kanban view={view} name={name} />}
           {tab === 'changes' && <ChangesTable changes={changes?.records ?? []} name={name} />}
           {tab === 'activity' && <ActivityTimeline events={events} name={name} />}
           {tab === 'insights' && <InsightsTab projectId={projectId} />}
-          {tab === 'setup' && view && <SetupPanel projectId={projectId} view={view} />}
+          {tab === 'setup' && view && (
+            <>
+              <SetupPanel projectId={projectId} view={view} />
+              <section className="section" style={{ marginTop: 'var(--s-6)' }}>
+                <div className="section-head"><h2>Project settings</h2><span className="faint small">Anything you leave alone follows the hub-wide <a href="#/settings">Settings</a>.</span></div>
+                <SettingsForm scope="project" projectId={projectId} />
+              </section>
+            </>
+          )}
         </div>
-        {chatOpen && <aside className="project-side" aria-label="Feed">
-          <div className="panel convo">
-            <div className="panel-head"><MessageSquare /><h2>Conversation</h2><span className="faint xs" style={{ marginLeft: 'auto' }}>your messages outrank the board</span></div>
-            <Feed events={events} names={names} />
-            <Composer projectId={projectId} agents={agents} />
-          </div>
-        </aside>}
       </div>
+      {chat.open && (
+        <aside className="chat-panel" aria-label="Conversation">
+          <div className="chat-resize" role="separator" aria-orientation="vertical" aria-label="Resize the conversation" tabIndex={0} onPointerDown={chat.startResize} onKeyDown={chat.onResizeKey} />
+          <div className="panel-head">
+            <MessageSquare /><h2>Conversation</h2>
+            <span className="faint xs head-note">your messages outrank the board</span>
+            <button className="ghost icon sm" aria-label="Close the conversation" title="Close" onClick={() => chat.setOpen(false)}><PanelRightClose /></button>
+          </div>
+          <Feed events={events} names={names} leaderId={agents.find((a) => a.role === 'leader')?.agentId} />
+          <Composer projectId={projectId} agents={agents} />
+        </aside>
+      )}
       <StartAgentsSheet open={starting} onClose={() => setStarting(false)} projectId={projectId} />
     </div>
   );
 }
 
+const leaderFirst = (a: RosterRecord, b: RosterRecord) => (a.role === 'leader' ? -1 : b.role === 'leader' ? 1 : a.name.localeCompare(b.name));
+
+/** The conversation panel: open state and width remembered per browser, resizable by drag or keys. */
+function useChatPanel() {
+  const read = <T,>(key: string, fallback: T): T => {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : (JSON.parse(v) as T);
+    } catch {
+      return fallback;
+    }
+  };
+  const write = (key: string, v: unknown) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(v));
+    } catch {
+      /* private mode: not remembered */
+    }
+  };
+  const [open, setOpenState] = useState(() => read('rt.chat.open', typeof window === 'undefined' || window.innerWidth >= 1280));
+  const [width, setWidthState] = useState(() => read('rt.chat.width', 380));
+  const clamp = (w: number) => Math.round(Math.min(Math.max(w, 300), Math.min(720, window.innerWidth * 0.5)));
+  const setOpen = (v: boolean) => { setOpenState(v); write('rt.chat.open', v); };
+  const setWidth = (w: number) => { const c = clamp(w); setWidthState(c); write('rt.chat.width', c); };
+  const startResize = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width;
+    const move = (ev: PointerEvent) => setWidth(startW + (startX - ev.clientX));
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); document.body.classList.remove('resizing'); };
+    document.body.classList.add('resizing');
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+  };
+  const onResizeKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'ArrowLeft') setWidth(width + 24);
+    if (e.key === 'ArrowRight') setWidth(width - 24);
+  };
+  return { open, setOpen, width, startResize, onResizeKey };
+}
+
 // ── the table ──────────────────────────────────────────────────────────────────────────
 
-function TableTab({ projectId, agents, events, cost, onStart }: { projectId: string; agents: RosterRecord[]; events: LogEvent[]; cost: number; onStart: () => void }) {
+function TableTab({ projectId, agents, events, cost, view, onStart }: { projectId: string; agents: RosterRecord[]; events: LogEvent[]; cost: number; view: BoardOverview | undefined; onStart: () => void }) {
   const [selected, setSelected] = useState<string>();
   const current = agents.find((a) => a.agentId === selected) ?? agents.find((a) => a.role === 'leader') ?? agents[0];
   if (agents.length === 0) {
@@ -147,6 +205,7 @@ function TableTab({ projectId, agents, events, cost, onStart }: { projectId: str
   }
   return (
     <>
+      <LeaderBar agents={agents} view={view} projectId={projectId} onSelect={setSelected} />
       <div className="stage">
         <div className="table-wrap-outer">
           <RoundTable agents={agents} selected={current?.agentId} onSelect={setSelected} events={events} cost={cost} />
@@ -165,6 +224,48 @@ function TableTab({ projectId, agents, events, cost, onStart }: { projectId: str
       </section>
     </>
   );
+}
+
+/** Who leads, what the plan looks like, and what the leader is on: the first thing to read at the table. */
+function LeaderBar({ agents, view, projectId, onSelect }: { agents: RosterRecord[]; view: BoardOverview | undefined; projectId: string; onSelect: (id: string) => void }) {
+  const leader = agents.find((a) => a.role === 'leader');
+  const now = useNow();
+  const [assign, assigning] = useCommand('leader.assign');
+  const toast = useToast();
+  const workers = agents.filter((a) => a.role === 'worker' && a.state === 'active');
+  if (!leader) {
+    if (workers.length === 0) return null;
+    return (
+      <div className="leader-bar missing" role="status">
+        <Crown />
+        <span><strong>No leader yet.</strong> <span className="muted">The leader plans the goal and keeps the team moving; without one, workers propose tasks themselves.</span></span>
+        <select aria-label="Choose the leader" defaultValue="" disabled={assigning} onChange={async (e) => { const id = e.target.value; if (id && (await assign({ projectId, agentId: id }))) toast(`${names(agents, id)} is now the leader`); }}>
+          <option value="" disabled>Make one the leader…</option>
+          {workers.map((w) => <option key={w.agentId} value={w.agentId}>{w.name}</option>)}
+        </select>
+      </div>
+    );
+  }
+  const t = view?.taskCounts ?? {};
+  const total = Object.values(t).reduce((n, x) => n + x, 0);
+  const plan = total === 0 ? 'no plan yet' : `${t.done ?? 0} of ${total} task${total === 1 ? '' : 's'} done${t.proposed ? `, ${t.proposed} waiting for approval` : ''}`;
+  const next = leader.next && leader.next.tool !== 'wait' ? leader.next.step : null;
+  return (
+    <button type="button" className="leader-bar" onClick={() => onSelect(leader.agentId)}>
+      <Avatar name={leader.name} seat={seatOf(leader, now)} leader />
+      <span className="lb-who">
+        <span className="lb-eyebrow"><Crown /> Leader</span>
+        <strong>{leader.name}</strong>
+        {leader.driven?.kind && <ProviderLogo kind={leader.driven.kind} size="xs" />}
+      </span>
+      <span className="lb-plan"><span className="faint xs">Plan</span><span className="small">{plan}</span></span>
+      <span className="lb-next"><span className="faint xs">{next ? 'Next for the leader' : 'Now'}</span><span className="small truncate">{next ?? (leader.driven ? SEAT_LABEL[seatOf(leader, now)] : leader.activity?.doing ?? 'waiting for the team')}</span></span>
+    </button>
+  );
+}
+
+function names(agents: RosterRecord[], id: string): string {
+  return agents.find((a) => a.agentId === id)?.name ?? shortId(id);
 }
 
 const MESSAGE_WINDOW_MS = 120_000;
@@ -230,7 +331,7 @@ function RoundTable({ agents, selected, onSelect, events, cost }: { agents: Rost
         return (
           <g
             key={a.agentId}
-            className={`seat ${seat}`}
+            className={`seat ${seat} ${a.role === 'leader' ? 'leader' : ''}`}
             role="button"
             tabIndex={0}
             aria-pressed={a.agentId === selected}
@@ -266,8 +367,8 @@ function Inspector({ agent, projectId, events }: { agent: RosterRecord; projectI
     <div className="inspector" aria-label={`${agent.name} details`}>
       <div className="inspector-head">
         <Avatar name={agent.name} seat={seat} leader={agent.role === 'leader'} size="lg" />
-        <div>
-          <h3>{agent.name}</h3>
+        <div style={{ minWidth: 0 }}>
+          <h3 className="row" style={{ gap: 'var(--s-2)' }}>{agent.name}{d?.kind && <ProviderLogo kind={d.kind} size="xs" />}</h3>
           <div className="row" style={{ gap: 'var(--s-2)', marginTop: 2 }}>
             <span className={`role ${agent.role} badge ${agent.role === 'leader' ? 'accent' : ''}`}>{agent.role}</span>
             {d ? <RunState live={d.live} /> : <AgentStatus agent={agent} compact />}
@@ -291,6 +392,7 @@ function Inspector({ agent, projectId, events }: { agent: RosterRecord; projectI
           <div className="metric" style={{ alignContent: 'center' }}><Sparkline values={perTurn} width={110} height={30} label={`${agent.name}: tokens per turn`} /><span className="k">tokens per turn</span></div>
         </div>
       )}
+      {d && <ModelEffort agent={agent} projectId={projectId} />}
       {agent.next && agent.next.tool !== 'wait' && (
         <p className="next-step"><Sparkles /><span><span className="faint">The board says next:</span> {agent.next.step.length > 240 ? `${agent.next.step.slice(0, 240)}…` : agent.next.step}</span></p>
       )}
@@ -303,19 +405,73 @@ function Inspector({ agent, projectId, events }: { agent: RosterRecord; projectI
   );
 }
 
+/** A hub-run agent's own model and effort; changing them restarts it when idle (it resumes). */
+function ModelEffort({ agent, projectId }: { agent: RosterRecord; projectId: string }) {
+  const d = agent.driven!;
+  const { data: providers } = useQuery<ProviderList>('provider.list', {});
+  const provider = providers?.providers.find((p) => p.providerId === d.providerId);
+  const kind = providers?.kinds.find((k) => k.kind === provider?.settings.kind);
+  const [editing, setEditing] = useState(false);
+  const [model, setModel] = useState(d.model);
+  const [effort, setEffort] = useState(d.effort);
+  useEffect(() => { setModel(d.model); setEffort(d.effort); }, [d.model, d.effort, editing]);
+  const [configure, busy, error] = useCommand('agent.configure');
+  const toast = useToast();
+  const id = useId();
+  const shownModel = d.model || provider?.settings.model || 'CLI default';
+  const shownEffort = d.effort || provider?.settings.effort || 'default';
+  if (!editing) {
+    return (
+      <div className="model-line">
+        <Cpu /><span className="small"><span className="faint">Model</span> <span className="mono">{shownModel}</span>{kind?.efforts.length ? <> · <span className="faint">effort</span> <span className="mono">{shownEffort}</span></> : null}</span>
+        {(d.model || d.effort) ? <span className="badge chip">own choice</span> : <span className="faint xs">from {provider?.settings.label ?? 'the provider'} or its role</span>}
+        <button className="ghost sm" onClick={() => setEditing(true)}><SlidersHorizontal /> Change</button>
+      </div>
+    );
+  }
+  return (
+    <form
+      className="model-line editing"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (await configure({ projectId, agentId: agent.agentId, model: model.trim(), effort })) {
+          toast(`${agent.name} switches ${d.live.status === 'working' ? 'after this turn' : 'now'}, and keeps its conversation`);
+          setEditing(false);
+        }
+      }}
+    >
+      <label className="sr-only" htmlFor={`${id}-m`}>Model</label>
+      <input id={`${id}-m`} className="mono-input" list={`${id}-models`} value={model} placeholder={`provider’s (${provider?.settings.model || 'CLI default'})`} onChange={(e) => setModel(e.target.value)} />
+      <datalist id={`${id}-models`}>{(kind?.models ?? []).map((m) => <option key={m} value={m} />)}</datalist>
+      {kind && kind.efforts.length > 0 && (
+        <>
+          <label className="sr-only" htmlFor={`${id}-e`}>Effort</label>
+          <select id={`${id}-e`} value={effort} onChange={(e) => setEffort(e.target.value)}>
+            <option value="">Provider’s effort</option>
+            {kind.efforts.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+        </>
+      )}
+      <button type="submit" className="sm primary" disabled={busy}>Apply</button>
+      <button type="button" className="sm ghost" onClick={() => setEditing(false)}>Cancel</button>
+      {error && <p className="error">{error}</p>}
+    </form>
+  );
+}
+
 function AgentCard({ agent, projectId, current, onSelect }: { agent: RosterRecord; projectId: string; current: boolean; onSelect: () => void }) {
   const [assign, busy] = useCommand('leader.assign');
   const now = useNow();
   return (
-    <article className="panel agent" aria-current={current ? 'true' : undefined} style={{ padding: 'var(--s-4)', display: 'grid', gap: 'var(--s-3)', borderColor: current ? 'var(--accent-line)' : undefined }}>
+    <article className={`panel agent ${agent.role === 'leader' ? 'is-leader' : ''}`} aria-current={current ? 'true' : undefined}>
       <div className="row" style={{ flexWrap: 'nowrap' }}>
         <Avatar name={agent.name} seat={seatOf(agent, now)} leader={agent.role === 'leader'} />
         <div style={{ minWidth: 0 }}>
-          <strong className="truncate" style={{ display: 'block' }}>{agent.name}</strong>
-          <span className="faint xs">{agent.driven ? `run by the hub · ${agent.client}` : `joined from ${agent.client}`}</span>
+          <strong className="truncate row" style={{ gap: 6 }}>{agent.name}{agent.driven?.kind && <ProviderLogo kind={agent.driven.kind} size="xs" />}</strong>
+          <span className="faint xs">{agent.driven ? `run by the hub · ${agent.driven.model || agent.client}` : `joined from ${agent.client}`}</span>
         </div>
         <span className="spacer" />
-        <span className={`role ${agent.role} badge ${agent.role === 'leader' ? 'accent' : ''}`}>{agent.role}</span>
+        <span className={`role ${agent.role} badge ${agent.role === 'leader' ? 'accent' : ''}`}>{agent.role === 'leader' && <Crown />}{agent.role}</span>
       </div>
       {agent.driven ? <RunState live={agent.driven.live} /> : <AgentStatus agent={agent} />}
       <p className="small muted">
@@ -403,7 +559,7 @@ function ActivityTimeline({ events, name }: { events: LogEvent[]; name: (id: str
   );
 }
 
-function Feed({ events, names }: { events: LogEvent[]; names: Map<string, string> }) {
+function Feed({ events, names, leaderId }: { events: LogEvent[]; names: Map<string, string>; leaderId: string | undefined }) {
   const who = (id: string) => (id.startsWith('human:') ? 'You' : id === 'hub' ? 'Hub' : names.get(id) ?? shortId(id));
   const list = useRef<HTMLOListElement>(null);
   const pinned = useRef(true);
@@ -422,10 +578,10 @@ function Feed({ events, names }: { events: LogEvent[]; names: Map<string, string
           const priority = String(p.priority);
           const to = p.to === 'all' ? 'everyone' : Array.isArray(p.to) ? (p.to as string[]).map(who).join(', ') : String(p.to);
           return (
-            <li key={e.gpos} className={`bubble msg p-${priority} ${from === 'You' ? 'you' : ''} ${priority === 'critical' ? 'critical' : ''}`}>
-              <Avatar name={from === 'You' ? 'You' : from} size="xs" />
+            <li key={e.gpos} className={`bubble msg p-${priority} ${from === 'You' ? 'you' : ''} ${priority === 'critical' ? 'critical' : ''} ${p.from === leaderId ? 'from-leader' : ''} ${Array.isArray(p.to) && leaderId && (p.to as string[]).includes(leaderId) ? 'to-leader' : ''}`}>
+              <Avatar name={from === 'You' ? 'You' : from} size="xs" leader={p.from === leaderId} />
               <div style={{ minWidth: 0 }}>
-                <div className="who msg-meta"><b>{from}</b> → {to}{priority !== 'normal' && <span className={`chip badge ${priority === 'human' ? 'accent' : priority === 'critical' ? 'bad' : ''}`}>{priority}</span>}<time>{clock(e.ts)}</time></div>
+                <div className="who msg-meta"><b>{from}</b>{p.from === leaderId && <span className="leader-tag"><Crown />leader</span>} → {to}{priority !== 'normal' && <span className={`chip badge ${priority === 'human' ? 'accent' : priority === 'critical' ? 'bad' : ''}`}>{priority}</span>}<time>{clock(e.ts)}</time></div>
                 <div className="body msg-body">{String(p.body)}</div>
               </div>
             </li>
@@ -458,7 +614,10 @@ function describe(e: LogEvent, who: (id: string) => string): string {
 
 function Composer({ projectId, agents }: { projectId: string; agents: RosterRecord[] }) {
   const [body, setBody] = useState('');
-  const [to, setTo] = useState('all');
+  const leader = agents.find((a) => a.role === 'leader' && (a.state === 'active' || a.state === 'stale'));
+  const [picked, setTo] = useState<string>();
+  // Talk to the leader by default (it coordinates); everyone or one agent when you choose.
+  const to = picked && (picked === 'all' || agents.some((a) => a.agentId === picked)) ? picked : leader?.agentId ?? 'all';
   const [post, busy, error] = useCommand('human.post');
   const submit = async () => {
     if (!body.trim()) return;
@@ -471,12 +630,13 @@ function Composer({ projectId, agents }: { projectId: string; agents: RosterReco
   return (
     <form className="composer" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
       <label className="sr-only" htmlFor="composer-body">Instruction</label>
-      <textarea id="composer-body" rows={3} value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={onKey} placeholder="Tell the team something. It becomes their next turn and outranks the board." />
+      <textarea id="composer-body" rows={3} value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={onKey} placeholder={to === 'all' ? 'Tell the whole team something. It becomes each agent’s next turn and outranks the board.' : `Tell ${names(agents, to)} something. It becomes their next turn and outranks the board.`} />
       <div className="row">
         <label className="sr-only" htmlFor="composer-to">Send to</label>
         <select id="composer-to" value={to} onChange={(e) => setTo(e.target.value)}>
+          {leader && <option value={leader.agentId}>{leader.name} (leader)</option>}
           <option value="all">Everyone</option>
-          {agents.filter((a) => a.state === 'active' || a.state === 'stale').map((a) => <option key={a.agentId} value={a.agentId}>{a.name}</option>)}
+          {agents.filter((a) => (a.state === 'active' || a.state === 'stale') && a.agentId !== leader?.agentId).map((a) => <option key={a.agentId} value={a.agentId}>{a.name}</option>)}
         </select>
         <span className="kbd">Ctrl ↵</span>
         <button className="primary sm" type="submit" disabled={busy || !body.trim()}><Send /> Send</button>

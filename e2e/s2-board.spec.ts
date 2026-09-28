@@ -41,9 +41,9 @@ test('the human sets up the board in the app, approves the plan, and watches a t
   await page.getByLabel('Repository path').fill(repo.path);
   await page.getByRole('button', { name: 'Attach' }).click();
   await expect(page.getByText(repo.path)).toBeVisible();
-  await page.getByLabel('Test command').fill('sh test.sh');
-  await page.getByRole('button', { name: 'Save' }).click();
-  await page.getByRole('button', { name: /Conversation/ }).click();
+  await page.getByLabel('Check command').fill('sh test.sh');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: 'Conversation' })).toBeVisible();
   await expect(page.locator('.feed')).toContainText('rules added by you');
 
   // An agent proposes, the leader commits, the human approves the plan in the app.
@@ -83,17 +83,18 @@ test('the app flags an agent whose model stopped calling tools, louder when work
   const a = await pair(human, 'Ada', { projectId: lead.projectId });
   await human.call('leader.assign', { projectId: lead.projectId, agentId: lead.agentId });
   await human.call('goal.set', { projectId: lead.projectId, goal: { objective: 'Anything' } });
-  await a.client.call('agent.next');
+  await lead.client.call('agent.next');
+  void a;
 
   await page.clock.install();
   await page.goto(h.loginUrl());
   await page.locator('.nav-item', { hasText: 'Idle check' }).click();
   await page.getByRole('tab', { name: /Table/ }).click();
-  const card = page.locator('article.agent', { hasText: 'Ada' });
+  const card = page.locator('article.agent').filter({ has: page.getByText('Lead', { exact: true }) });
   await expect(card.getByText('working')).toBeVisible();
   await expect(card.locator('.nudge')).toHaveCount(0);
 
-  // Two minutes without a tool call: Ada's next step is real work (propose tasks for the goal).
+  // Two minutes without a tool call: the leader's next step is real work (plan the goal).
   await page.clock.fastForward('02:00');
   await expect(card.locator('.status')).toHaveText('stopped');
   await expect(card.locator('.nudge.urgent')).toContainText('Type “continue” in its chat');

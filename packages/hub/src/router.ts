@@ -84,6 +84,9 @@ export class Router {
               // Hub-run agents (ADR-0018): the supervisor knows exactly what they are doing.
               driven: driven && {
                 providerId: driven.providerId,
+                kind: hub.model.providers[driven.providerId]?.settings.kind ?? null,
+                model: driven.model,
+                effort: driven.effort,
                 run: driven.run,
                 turns: driven.turns,
                 costUsd: driven.costUsd,
@@ -116,6 +119,21 @@ export class Router {
         if (driver) return driver.detect(input.command);
         const { detectBinary } = await import('./drivers/process.ts');
         return detectBinary(input.command || def.binary);
+      },
+      'provider.models': async (_session, input: { providerId: ProviderId }) => {
+        const provider = hub.model.providers[input.providerId];
+        if (!provider || provider.removed) throw new RpcError('rejected', 'no such provider');
+        const kind = providerKind(provider.settings.kind)!;
+        if (!kind.listModels) return { models: [...kind.models], error: null, listed: false };
+        let env: Record<string, string>;
+        try {
+          env = providerEnv(provider, hub.secrets);
+        } catch (error) {
+          return { models: [...kind.models], error: error instanceof Error ? error.message : String(error), listed: false };
+        }
+        const { listModels } = await import('./drivers/process.ts');
+        const out = await listModels(provider.settings.command || kind.binary, kind.listModels, env);
+        return { ...out, listed: out.models.length > 0 };
       },
       'provider.test': async (_session, input: { providerId: ProviderId }) => {
         const provider = hub.model.providers[input.providerId];

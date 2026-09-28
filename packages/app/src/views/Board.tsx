@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { Check, CircleCheck, CircleX, FlaskConical, FolderGit2, GitBranch, GitMerge, GitPullRequest, Target, X } from 'lucide-react';
+import { Check, CircleCheck, CircleX, Crown, FlaskConical, FolderGit2, GitBranch, GitMerge, GitPullRequest, ScrollText, Target, X } from 'lucide-react';
 import { useCommand } from '../hub.tsx';
 import { shortId } from '../format.ts';
 import { Avatar, TASK_COLOR, TASK_COLUMNS, useToast } from '../ui.tsx';
@@ -117,7 +117,7 @@ export function SetupPanel({ projectId, view }: { projectId: string; view: Board
     <div className="setup-grid">
       <GoalForm projectId={projectId} goal={view.goal} />
       <RepoForm projectId={projectId} repo={view.project.repo} />
-      <TestCommandForm projectId={projectId} rules={view.rules} />
+      <RulesForm projectId={projectId} rules={view.rules} />
     </div>
   );
 }
@@ -176,22 +176,46 @@ function RepoForm({ projectId, repo }: { projectId: string; repo: string | null 
   );
 }
 
-function TestCommandForm({ projectId, rules }: { projectId: string; rules: Entry | null }) {
+/** Checks the hub runs before merging, and the project's rules for its agents (added to the hub-wide ones). */
+function RulesForm({ projectId, rules }: { projectId: string; rules: Entry | null }) {
   const id = useId();
-  const current = (rules?.data.testCommand as string | undefined) ?? '';
-  const [command, setCommand] = useState(current);
-  useEffect(() => setCommand(current), [current]);
+  const data = (rules?.data ?? {}) as { testCommand?: string; text?: string; leaderText?: string };
+  const [command, setCommand] = useState(data.testCommand ?? '');
+  const [text, setText] = useState(data.text ?? '');
+  const [leaderText, setLeaderText] = useState(data.leaderText ?? '');
+  useEffect(() => {
+    setCommand(data.testCommand ?? '');
+    setText(data.text ?? '');
+    setLeaderText(data.leaderText ?? '');
+  }, [rules?.version]); // eslint-disable-line react-hooks/exhaustive-deps
   const [save, saving, error] = useCommand('rules.edit');
   const toast = useToast();
+  const dirty = command.trim() !== (data.testCommand ?? '') || text !== (data.text ?? '') || leaderText !== (data.leaderText ?? '');
   return (
-    <form className="panel setup-card" onSubmit={async (e) => { e.preventDefault(); if (await save({ projectId, rules: { ...(rules?.data ?? {}), testCommand: command.trim() } })) toast('Test command saved'); }}>
-      <div className="setup-title"><FlaskConical /> Tests {current && <CircleCheck className="done" size={16} />}</div>
+    <form
+      className="panel setup-card rules-card"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const next = { ...(rules?.data ?? {}), testCommand: command.trim() || undefined, text: text.trim() || undefined, leaderText: leaderText.trim() || undefined };
+        if (await save({ projectId, rules: next })) toast('Rules saved: agents are told at once');
+      }}
+    >
+      <div className="setup-title"><ScrollText /> Checks and rules {data.testCommand && <CircleCheck className="done" size={16} />}</div>
       <div className="field">
-        <label htmlFor={`${id}-test`}>Test command</label>
-        <input id={`${id}-test`} className="mono-input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npm ci && npm test" />
+        <label htmlFor={`${id}-test`}><FlaskConical size={13} /> Check command</label>
+        <input id={`${id}-test`} className="mono-input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npm install && npm test" />
+        <span className="hint">The hub runs it on main + each change before merging; a failure keeps main untouched. Installed packages are kept between runs.</span>
       </div>
-      <p className="hint">The hub runs it itself on main + each change before merging; a failure keeps main untouched.</p>
-      <button type="submit" className={current ? '' : 'primary'} disabled={saving || !command.trim() || command.trim() === current}>Save</button>
+      <div className="field">
+        <label htmlFor={`${id}-rules`}>Rules for every agent in this project</label>
+        <textarea id={`${id}-rules`} rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Plain JavaScript, no frameworks. Don’t touch the deploy folder. Keep each change under 200 lines." />
+      </div>
+      <div className="field">
+        <label htmlFor={`${id}-leader`}><Crown size={13} /> Rules for the leader</label>
+        <textarea id={`${id}-leader`} rows={2} value={leaderText} onChange={(e) => setLeaderText(e.target.value)} placeholder="e.g. Plan at most 4 tasks. Ask me before adding anything beyond the goal." />
+        <span className="hint">Added to the hub-wide rules in Settings.</span>
+      </div>
+      <button type="submit" className={data.testCommand ? '' : 'primary'} disabled={saving || !dirty || !command.trim()}>Save</button>
       {error && <p className="error">{error}</p>}
     </form>
   );

@@ -45,10 +45,13 @@ test('the human sets up a provider, starts two agents from it and watches them a
   const sheet = page.getByRole('dialog', { name: 'Start agents' });
   await expect(sheet.getByLabel('Name 1')).toHaveValue('Ada');
   await expect(sheet.getByLabel('Name 2')).toHaveValue('Bo');
+  // The project has no leader: the first one leads, so its first turn plans.
+  await expect(sheet.getByLabel('Leader')).toHaveValue('Ada');
+  await sheet.getByLabel('Effort').selectOption('low');
   await sheet.getByRole('button', { name: 'Start 2 agents' }).click();
   await expect(page.locator('.toast', { hasText: 'Started Ada, Bo' })).toBeVisible();
   await expect.poll(() => driver.started.length).toBe(2);
-  expect(driver.started[0]!.options.model).toBe('sonnet');
+  expect(driver.started[0]!.options).toMatchObject({ model: 'sonnet', effort: 'low' });
   expect(driver.started[0]!.options.env).toEqual({ ANTHROPIC_BASE_URL: 'https://llm.internal.example/v1', ANTHROPIC_AUTH_TOKEN: 'tok-123' });
 
   // A third would exceed the limit of 2.
@@ -61,19 +64,20 @@ test('the human sets up a provider, starts two agents from it and watches them a
   // The table: seats with live status, and the full session of the selected agent.
   await page.locator('.nav-item', { hasText: 'Checkout' }).click();
   await page.getByRole('tab', { name: /Table/ }).click();
-  const ada = page.getByRole('button', { name: /^Ada, worker, working/ });
+  const ada = page.getByRole('button', { name: /^Ada, leader, working/ });
   await expect(ada).toBeVisible();
   const proc = driver.started[0]!;
   proc.emit({ type: 'tool', name: 'mcp__roundtable__board_view', input: '{"view":"me"}' });
   proc.endTurn({ sessionCostUsd: 0.12 });
-  await expect(page.getByRole('button', { name: /^Ada, worker, idle/ })).toBeVisible();
-  await page.getByRole('button', { name: /^Ada, worker/ }).click();
+  await expect(page.getByRole('button', { name: /^Ada, leader, idle/ })).toBeVisible();
+  await page.getByRole('button', { name: /^Ada, leader/ }).click();
   const detail = page.getByLabel('Ada details');
   await expect(page.getByLabel('Ada transcript')).toContainText('board_view');
   await expect(detail).toContainText('$0.12');
+  await expect(page.locator('.leader-bar')).toContainText('Ada');
 
   await detail.getByRole('button', { name: 'Stop' }).click();
-  await expect(page.getByRole('button', { name: /^Ada, worker, stopped/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Ada, leader, stopped/ })).toBeVisible();
   expect(proc.stopped).toBe(true);
   await detail.getByRole('button', { name: 'Start' }).click();
   await expect.poll(() => driver.started.length).toBe(3);

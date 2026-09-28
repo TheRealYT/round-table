@@ -55,3 +55,29 @@ export function detectBinary(command: string): Promise<Detection> {
     });
   });
 }
+
+/**
+ * The models a CLI offers, from its own list command (e.g. `agy models`): the first word of each
+ * line that looks like a model name. Empty when the command fails.
+ */
+export function listModels(command: string, args: readonly string[], env: Record<string, string>): Promise<{ models: string[]; error: string | null }> {
+  const path = which(command);
+  if (!path) return Promise.resolve({ models: [], error: `${command} is not on the hub’s PATH` });
+  return new Promise((resolve) => {
+    const child = spawn(path, [...args], { env: agentEnv(env), stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), 20_000);
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ models: [], error: error.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const models = [...new Set(out.split('\n').map((l) => l.trim().split(/\s+/)[0] ?? '').filter((w) => /^[A-Za-z0-9][\w.:/-]{1,80}$/.test(w) && !/^(name|model|models|id)$/i.test(w)))];
+      resolve({ models, error: code === 0 ? null : (err.trim().split('\n')[0] || `exit ${code}`) });
+    });
+  });
+}

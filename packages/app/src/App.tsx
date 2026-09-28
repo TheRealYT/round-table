@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowRight, Bot, FolderGit2, LayoutDashboard, Link, Plus, Search } from 'lucide-react';
+import { ArrowRight, Bot, FolderGit2, LayoutDashboard, Link, Plus, Search, Settings as SettingsIcon } from 'lucide-react';
 import { useCommand, useHubStatus, useQuery } from './hub.tsx';
 import type { PairingRequest, ProjectSummary, ProviderList } from './types.ts';
 import { ThemeSwitch, useToast } from './ui.tsx';
@@ -7,14 +7,16 @@ import { AgentsView } from './views/Agents.tsx';
 import { OverviewView } from './views/Overview.tsx';
 import { PairingView } from './views/Pairing.tsx';
 import { ProjectView } from './views/Project.tsx';
+import { SettingsView } from './views/Settings.tsx';
 
-export type Route = { view: 'overview' } | { view: 'agents' } | { view: 'pairing' } | { view: 'project'; projectId: string; tab?: string };
+export type Route = { view: 'overview' } | { view: 'agents' } | { view: 'pairing' } | { view: 'settings' } | { view: 'project'; projectId: string; tab?: string };
 
 function readRoute(): Route {
   const m = /^#\/project\/([^/]+)(?:\/(\w+))?$/.exec(location.hash);
   if (m?.[1]) return { view: 'project', projectId: decodeURIComponent(m[1]), ...(m[2] && { tab: m[2] }) };
   if (location.hash === '#/pairing') return { view: 'pairing' };
   if (location.hash === '#/agents') return { view: 'agents' };
+  if (location.hash === '#/settings') return { view: 'settings' };
   return { view: 'overview' };
 }
 
@@ -57,6 +59,8 @@ export function App() {
           <OverviewView />
         ) : route.view === 'agents' ? (
           <AgentsView />
+        ) : route.view === 'settings' ? (
+          <SettingsView />
         ) : route.view === 'pairing' ? (
           <PairingView onOpenProject={(projectId) => go({ view: 'project', projectId })} />
         ) : (
@@ -116,7 +120,9 @@ function Sidebar({ route, onSearch }: { route: Route; onSearch: () => void }) {
       </button>
       {nav({ view: 'overview' }, <LayoutDashboard />, 'Overview')}
       {nav({ view: 'agents' }, <Bot />, 'Agents', running > 0 ? <span className="count-badge count" title={`${running} running`}>{running}</span> : undefined)}
-      {nav({ view: 'pairing' }, <Link />, 'Pairing', pending > 0 ? <span className="count-badge hot count" title={`${pending} waiting`}>{pending}</span> : undefined)}
+      {/* Pairing is for agents joining from a chat window; it shows when a request waits or you are there. */}
+      {(pending > 0 || route.view === 'pairing') && nav({ view: 'pairing' }, <Link />, 'Pairing', pending > 0 ? <span className="count-badge hot count" title={`${pending} waiting`}>{pending}</span> : undefined)}
+      {nav({ view: 'settings' }, <SettingsIcon />, 'Settings')}
       <div className="nav-label">
         Projects
         <button className="ghost icon sm" aria-label="New project" title="New project" onClick={() => setAdding(true)}><Plus /></button>
@@ -198,7 +204,8 @@ function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void 
     const list: Cmd[] = [
       { group: 'Go to', label: 'Overview', icon: <LayoutDashboard />, run: () => go({ view: 'overview' }) },
       { group: 'Go to', label: 'Agents and providers', icon: <Bot />, run: () => go({ view: 'agents' }) },
-      { group: 'Go to', label: 'Pairing', icon: <Link />, run: () => go({ view: 'pairing' }) },
+      { group: 'Go to', label: 'Pairing (agents from a chat window)', icon: <Link />, run: () => go({ view: 'pairing' }) },
+      { group: 'Go to', label: 'Settings', icon: <SettingsIcon />, run: () => go({ view: 'settings' }) },
       ...(projects ?? []).map((p) => ({ group: 'Projects', label: p.name, icon: <FolderGit2 />, hint: `${p.agents} agents`, run: () => go({ view: 'project', projectId: p.projectId }) })),
       ...(projects ?? []).map((p) => ({ group: 'Actions', label: `Start agents in ${p.name}`, icon: <Bot />, run: () => go({ view: 'project', projectId: p.projectId, tab: 'table' }) })),
     ];
