@@ -1,7 +1,8 @@
-import { providerKind, type AgentId, type ProjectId, type ProviderId, type ProviderKindDef, type ProviderSettings } from '@round-table/protocol';
+import { providerKind, type AgentId, type ProjectId, type ProviderId, type PendingEvent, type ProviderKindDef, type ProviderSettings } from '@round-table/protocol';
 import { authorOf, HUB, inProject, makeEvent, SYSTEM } from '../event.ts';
 import { accept, reject, type CommandHandler } from '../module.ts';
-import type { Model } from '../model.ts';
+import { projectCost, settingsFor, type Model } from '../model.ts';
+import type { Ctx } from '../ports.ts';
 
 /**
  * Providers and hub-run agents (ADR-0018). The hub prepares what needs IO or crypto before these
@@ -115,8 +116,29 @@ export const recordCliSession: CommandHandler<{ agentId: AgentId; cliSessionId: 
 export const recordTurn: CommandHandler<{ agentId: AgentId; ok: boolean; durationMs: number; costUsd: number | null; sessionCostUsd: number | null; inputTokens: number; outputTokens: number; error: string | null }> = (model, command, ctx) => {
   const agent = model.agents[command.input.agentId];
   if (!agent?.driven) return reject('unknown_agent', 'not a hub-run agent');
-  return accept([makeEvent(ctx, HUB, inProject(agent.projectId), 'agent.turn_finished', command.input)]);
+  return accept([makeEvent(ctx, HUB, inProject(agent.projectId), 'agent.turn_finished', command.input), ...budgetCheck(model, agent.projectId, command.input.costUsd ?? 0, ctx)]);
 };
+
+/**
+ * The project budget (spec D8, pulled into S2c): warn at 80%, and at 100% stop the project's
+ * hub-run agents. The human raises the limit or starts them again.
+ */
+function budgetCheck(model: Readonly<Model>, projectId: ProjectId, adding: number, ctx: Ctx): PendingEvent[] {
+  const limitUsd = settingsFor(model, projectId).budget.projectUsd;
+  const project = model.projects[projectId];
+  if (!project || limitUsd <= 0) return [];
+  const costUsd = projectCost(model, projectId) + adding;
+  const state = project.budget ?? { warned: false, reached: false };
+  if (costUsd >= limitUsd && !state.reached) {
+    const running = Object.values(model.agents).filter((a) => a.projectId === projectId && a.driven?.run);
+    return [
+      makeEvent(ctx, HUB, SYSTEM, 'budget.reached', { projectId, costUsd, limitUsd }),
+      ...running.map((a) => makeEvent(ctx, HUB, SYSTEM, 'agent.run_requested', { agentId: a.agentId, run: false }, { reason: 'the project reached its budget' })),
+    ];
+  }
+  if (costUsd >= limitUsd * 0.8 && !state.warned) return [makeEvent(ctx, HUB, SYSTEM, 'budget.warned', { projectId, costUsd, limitUsd })];
+  return [];
+}
 
 /** Why the provider can't start agents for lack of a stored value, if so. */
 function missingCredentials(provider: Model['providers'][ProviderId]): string | undefined {

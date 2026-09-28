@@ -49,6 +49,8 @@ const TRIGGERS: Array<{ id: string; label: string; color: string }> = [
   { id: 'agent', label: 'agent message', color: 'var(--idle)' },
   { id: 'human', label: 'you', color: 'var(--human)' },
   { id: 'critical', label: 'critical', color: 'var(--crashed)' },
+  { id: 'request', label: 'request', color: 'var(--working)' },
+  { id: 'response', label: 'verdict', color: 'oklch(0.7 0.1 200)' },
   { id: 'hub', label: 'hub alert', color: 'oklch(0.72 0.14 300)' },
   { id: 'broadcast', label: 'broadcast', color: 'oklch(0.75 0.13 330)' },
   { id: 'notice', label: 'notice', color: 'var(--starting)' },

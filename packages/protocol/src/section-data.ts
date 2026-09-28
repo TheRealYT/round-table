@@ -18,6 +18,10 @@ export const RulesData = z.object({
   testTimeoutSec: z.number().int().positive().max(3600).default(600),
   conventions: z.array(z.string()).default([]),
   notes: z.string().optional(),
+  /** This project's rules for every agent (markdown), added to the hub-wide ones. */
+  text: z.string().max(20_000).optional(),
+  /** This project's rules for the leader only. */
+  leaderText: z.string().max(20_000).optional(),
 });
 export type RulesData = z.infer<typeof RulesData>;
 

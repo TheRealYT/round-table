@@ -12,4 +12,5 @@ export * from './sections.ts';
 export * from './section-data.ts';
 export * from './procedures.ts';
 export * from './providers.ts';
+export * from './settings.ts';
 export * from './client.ts';

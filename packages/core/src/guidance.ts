@@ -1,5 +1,5 @@
 import { RulesData, type AgentId, type ProjectId } from '@round-table/protocol';
-import type { ChangeRequestRecord, Model, ProjectRecord, TaskRecord } from './model.ts';
+import { settingsFor, type ChangeRequestRecord, type Model, type ProjectRecord, type TaskRecord } from './model.ts';
 
 /**
  * The agent's next step, computed from the board (spec D3: agents loop until dismissed).
@@ -61,7 +61,7 @@ function leaderStep(project: ProjectRecord): NextStep {
     const workers = Object.values(project.roster).filter((e) => e.role === 'worker' && (e.state === 'active' || e.state === 'stale')).length;
     return {
       tool: 'board_propose',
-      step: `Plan the goal "${goal}" yourself; the workers wait for your plan. Look at the repository if you need to (read only), then propose each task: board_propose {section: "tasks", op: "add", data: {title, criteria: [...], deps: [ticket ids of tasks it needs first]}, reason}. Keep tasks few and small, and have them touch different files so ${workers || 'the'} worker${workers === 1 ? '' : 's'} can work in parallel without conflicts. Then commit the whole plan in one call: board_commit {ticketIds: [...]}.`,
+      step: `Plan the goal "${goal}" yourself; the workers wait for your plan. Look at the repository if you need to (read only), then propose each task: board_propose {section: "tasks", op: "add", data: {title, criteria: [...], deps: [ticket ids of tasks it needs first]}, reason}. Keep tasks few and small, and have them touch different files so ${workers || 'the'} worker${workers === 1 ? '' : 's'} can work in parallel without conflicts. Avoid deps: when one task uses another's code, write the shared interface (file, function names, signatures) into both tasks' criteria so both can start now; add a dep only when a task truly can't start before another is merged. Then commit the whole plan in one call: board_commit {ticketIds: [...]}.`,
     };
   }
   if (tasks.some((t) => t.status === 'proposed')) {
@@ -168,4 +168,23 @@ function ownTaskStep(project: ProjectRecord, me: AgentId, task: TaskRecord, test
     return { tool: 'request', step: `Ask another worker to check your change: ${asks.join(' and ')}.` };
   }
   return { tool: 'wait', step: `"${task.title}" is waiting for its review and test. Call wait.` };
+}
+
+/**
+ * The rules an agent works under (S2c): the hub-wide team rules, the project's rules, and for the
+ * leader the leader rules of both. Empty when there are none.
+ */
+export function rulesBrief(model: Readonly<Model>, projectId: ProjectId, role: 'leader' | 'worker'): string {
+  const project = model.projects[projectId];
+  const settings = settingsFor(model, projectId);
+  const entry = Object.values(project?.entries ?? {}).find((e) => e.section === 'rules');
+  const data = RulesData.safeParse(entry?.data ?? {});
+  const projectRules = data.success ? data.data : undefined;
+  const parts = [
+    settings.rules.team.trim() && `Team rules (all projects):\n${settings.rules.team.trim()}`,
+    projectRules?.text?.trim() && `Project rules:\n${projectRules.text.trim()}`,
+    role === 'leader' && settings.rules.leader.trim() && `Leader rules (all projects):\n${settings.rules.leader.trim()}`,
+    role === 'leader' && projectRules?.leaderText?.trim() && `Leader rules (this project):\n${projectRules.leaderText.trim()}`,
+  ].filter(Boolean);
+  return parts.join('\n\n');
 }

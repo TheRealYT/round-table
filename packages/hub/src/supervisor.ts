@@ -1,4 +1,4 @@
-import { nextStep, type Model, type ProviderRecord, type TurnTrigger } from '@round-table/core';
+import { nextStep, rulesBrief, settingsFor, type Model, type ProviderRecord, type TurnTrigger } from '@round-table/core';
 import { providerKind, type AgentId, type EventRow, type MessageEnvelope, type Principal, type ProjectId, type RunStatus } from '@round-table/protocol';
 import type { KeyPair } from '@round-table/protocol/crypto';
 import type { Bus } from './command-bus.ts';
@@ -142,6 +142,7 @@ export class Supervisor {
     for (const row of rows) {
       if (row.type === 'agent.run_requested') this.reconcile((row.payload as { agentId: string }).agentId, true);
       if (row.type === 'agent.configured') this.restartWhenIdle((row.payload as { agentId: string }).agentId);
+      if (row.type === 'settings.changed') this.noticeRulesChange();
       if (row.type === 'roster.role_changed') {
         const { agentId, role } = row.payload as { agentId: string; role: string };
         const live = this.live.get(agentId);
@@ -216,6 +217,23 @@ export class Supervisor {
     if (!live.proc && live.status !== 'starting') void this.start(agentId);
   }
 
+  /** Rules in settings changed: each running agent hears its new rules with its next turn. */
+  private lastRules = new Map<string, string>();
+  private noticeRulesChange(): void {
+    for (const [agentId, live] of this.live) {
+      const agent = this.o.model.agents[agentId as AgentId];
+      const role = agent ? this.o.model.projects[agent.projectId]?.roster[agent.agentId]?.role : undefined;
+      if (!agent || !live.proc) continue;
+      const rules = rulesBrief(this.o.model, agent.projectId, role === 'leader' ? 'leader' : 'worker');
+      if (rules === (this.lastRules.get(agentId) ?? rules)) {
+        this.lastRules.set(agentId, rules);
+        continue;
+      }
+      this.lastRules.set(agentId, rules);
+      live.notices.push(`[Round Table] The human changed the rules. You now work under:\n${rules || '(no rules)'}`);
+    }
+  }
+
   /** New model or effort: restart the CLI (it resumes its conversation) now if idle, else after this turn. */
   private restartWhenIdle(agentId: string): void {
     const live = this.live.get(agentId);
@@ -263,6 +281,8 @@ export class Supervisor {
       const workspace = kind.dynamicTools ? { ...prepared, mcp: { ...prepared.mcp, args: [...prepared.mcp.args, '--tools', 'dynamic'] } } : prepared;
       if (generation !== live.generation || this.closed) return;
       const resumed = driven.cliSessionId !== null;
+      const agents = settingsFor(this.o.model, agent.projectId).agents;
+      const roleDefaults = project?.roster[agent.agentId]?.role === 'leader' ? { model: agents.leaderModel, effort: agents.leaderEffort } : { model: agents.workerModel, effort: agents.workerEffort };
       live.proc = driver.start(
         {
           agentId,
@@ -272,8 +292,9 @@ export class Supervisor {
           env,
           mcp: workspace.mcp,
           systemPrompt: systemPrompt(agent.name),
-          model: driven.model || provider.settings.model,
-          effort: driven.effort || provider.settings.effort,
+          // The agent's own choice, else its role's default from settings, else the provider's.
+          model: driven.model || roleDefaults.model || provider.settings.model,
+          effort: driven.effort || (kind.efforts.includes(roleDefaults.effort) ? roleDefaults.effort : '') || provider.settings.effort,
           extraArgs: provider.settings.extraArgs,
           resumeSessionId: driven.cliSessionId,
         },
@@ -432,6 +453,9 @@ export class Supervisor {
           `[Round Table] You are ${agent.name}, the ${role} on project "${project?.name ?? agent.projectId}". ${roleBrief(role)}`,
           `Goal: ${goal?.objective ?? 'not set yet (the human sets it in the app)'}.`,
         ];
+    const rules = project ? rulesBrief(this.o.model, project.projectId, role === 'leader' ? 'leader' : 'worker') : '';
+    if (rules && !resumed) lines.push(`[Round Table] Rules you work under:\n${rules}`);
+    this.lastRules.set(agentId, rules);
     if (messages) lines.push(messages);
     if (step.tool !== 'wait') {
       live.lastStep = step.step;
@@ -509,6 +533,8 @@ function strongest(messages: MessageEnvelope[]): TurnTrigger {
   if (messages.some((m) => m.role === 'human' || m.priority === 'human')) return 'human';
   if (messages.some((m) => m.priority === 'critical')) return 'critical';
   if (messages.some((m) => m.role !== 'hub' && m.to !== 'all')) return 'agent';
+  if (messages.some((m) => m.role === 'hub' && m.type === 'request')) return 'request';
+  if (messages.some((m) => m.role === 'hub' && m.type === 'response')) return 'response';
   if (messages.some((m) => m.role === 'hub')) return 'hub';
   return 'broadcast';
 }

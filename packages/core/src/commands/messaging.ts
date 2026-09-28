@@ -1,7 +1,7 @@
 import { priorityRank, type AgentId, type MessagePayload, type MessageType, type Priority, type ProjectId } from '@round-table/protocol';
 import { authorOf, inProject, makeEvent } from '../event.ts';
 import { accept, reject, type CommandHandler, type Decision } from '../module.ts';
-import type { ProjectRecord } from '../model.ts';
+import { settingsFor, type ProjectRecord } from '../model.ts';
 import { startedWork } from './tasks.ts';
 
 type To = 'all' | string | string[];
@@ -37,6 +37,9 @@ export const send: CommandHandler<{
   }
   if (quotesHumanMessage !== undefined && !project.humanMessages[quotesHumanMessage]) {
     return reject('unverified_quote', 'that human message id does not exist in this project');
+  }
+  if (!Array.isArray(to) && principal.kind === 'worker' && settingsFor(model, project.projectId).messaging.workerBroadcast === 'off') {
+    return reject('broadcast_off', 'messages to everyone are turned off for workers in this project: name the agents who need it (to: [agent ids])');
   }
   const recipients = resolveRecipients(project, to, principal.agentId);
   if (!recipients.ok) return reject('unknown_recipient', 'some recipients are not on the roster', { unknown: recipients.unknown });

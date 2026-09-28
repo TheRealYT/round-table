@@ -8,6 +8,23 @@ type Folder<T extends keyof EventPayloads> = (model: Model, payload: EventPayloa
  * `decide` produced, and it reads nothing but the model and the event (so replay is exact).
  */
 const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
+  'settings.changed': (m, p) => {
+    if (p.scope === 'hub') m.hubSettings = p.overrides;
+    else if (p.projectId && m.projects[p.projectId]) {
+      const project = m.projects[p.projectId]!;
+      // A new limit starts its alerts afresh.
+      if (p.overrides.budget?.projectUsd !== project.settings?.budget?.projectUsd) project.budget = { warned: false, reached: false };
+      project.settings = p.overrides;
+    }
+  },
+  'budget.warned': (m, p) => {
+    const project = m.projects[p.projectId];
+    if (project) project.budget = { ...(project.budget ?? { reached: false }), warned: true };
+  },
+  'budget.reached': (m, p) => {
+    const project = m.projects[p.projectId];
+    if (project) project.budget = { warned: true, reached: true };
+  },
   'project.created': (m, p, e) => {
     m.projects[p.projectId] = {
       projectId: p.projectId,

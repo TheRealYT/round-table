@@ -4,7 +4,7 @@
 //   node e2e/bench-tictactoe.ts [out-dir]                 # writes report.txt, insights.json, hub.db
 //   RT_E2E_KIND=antigravity node e2e/bench-tictactoe.ts
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { projectInsights } from '@round-table/hub';
@@ -84,9 +84,11 @@ const insights = projectInsights(h.hub.store.reader, projectId);
 const text = `${renderReport('Tic-tac-toe benchmark', insights)}\n\nOutcome: ${outcome} after ${minutes} min (provider ${KIND}).\nFiles on main: ${execFileSync('git', ['ls-tree', '-r', '--name-only', 'main'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').join(', ')}`;
 console.log(`\n${text}`);
 mkdirSync(out, { recursive: true });
+rmSync(join(out, 'hub.db'), { force: true });
 writeFileSync(join(out, 'report.txt'), `${text}\n`);
 writeFileSync(join(out, 'insights.json'), `${JSON.stringify({ outcome, minutes: Number(minutes), kind: KIND, ...insights }, null, 2)}\n`);
-copyFileSync(join(h.dir, 'hub.db'), join(out, 'hub.db'));
+// A consistent copy, WAL included, that `rt report --db` can read.
+h.hub.store.reader.run(`VACUUM INTO '${join(out, 'hub.db').replace(/'/g, "''")}'`);
 log(`wrote ${out}`);
 human.close();
 await h.close();

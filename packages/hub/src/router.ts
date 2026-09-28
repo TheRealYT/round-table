@@ -11,6 +11,7 @@ import {
   type StreamId,
   PROVIDER_KINDS,
   providerKind,
+  SETTINGS_DEFAULTS,
 } from '@round-table/protocol';
 import {
   fingerprint,
@@ -20,7 +21,7 @@ import {
   joinConfirmMessage,
   verifyMessage,
 } from '@round-table/protocol/crypto';
-import { INTERNAL_COMMANDS, nextStep, type ProjectRecord } from '@round-table/core';
+import { INTERNAL_COMMANDS, nextStep, settingsFor, type ProjectRecord } from '@round-table/core';
 import { boardGet, boardRead, boardView } from './board-queries.ts';
 import { projectInsights } from './insights.ts';
 import type { HubInternals } from './internals.ts';
@@ -133,6 +134,15 @@ export class Router {
       'agent.interrupt': (session, input: { projectId: string; agentId: string }) => {
         this.drivenIn(session, input.projectId, input.agentId);
         return { ok: hub.supervisor?.interrupt(input.agentId) ?? false };
+      },
+      'settings.get': (_session, input: { projectId?: string }) => {
+        const project = input.projectId ? hub.model.projects[input.projectId as ProjectId] : undefined;
+        return {
+          defaults: SETTINGS_DEFAULTS,
+          hub: hub.model.hubSettings ?? {},
+          project: project?.settings ?? {},
+          resolved: settingsFor(hub.model, project?.projectId),
+        };
       },
       'project.insights': (_session, input: { projectId: string }) => {
         if (!hub.model.projects[input.projectId as ProjectId]) throw new RpcError('rejected', 'no such project');

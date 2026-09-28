@@ -1,4 +1,4 @@
-import type { AgentId, ChangeRequestId, Criticality, EntryId, PairingId, ProjectId, ProviderId, ProviderSettings, RepoId, RequestId, Sha, TaskId, TicketId } from '@round-table/protocol';
+import { resolveSettings, type AgentId, type ChangeRequestId, type Criticality, type EntryId, type PairingId, type ProjectId, type ProviderId, type ProviderSettings, type RepoId, type RequestId, type Settings, type SettingsOverrides, type Sha, type TaskId, type TicketId } from '@round-table/protocol';
 import type { TaskStatus } from './tasks/status.ts';
 
 /**
@@ -15,6 +15,8 @@ export interface Model {
   timers: Record<string, TimerRecord>;
   /** Configured CLIs agents are started from (ADR-0018). */
   providers: Record<ProviderId, ProviderRecord>;
+  /** Hub-wide settings overrides (S2c); absent in models from before they existed. */
+  hubSettings?: SettingsOverrides;
 }
 
 export interface ProviderRecord {
@@ -126,6 +128,10 @@ export interface ProjectRecord {
   tasks: Record<TaskId, TaskRecord>;
   changeRequests: Record<ChangeRequestId, ChangeRequestRecord>;
   requests: Record<RequestId, RequestRecord>;
+  /** This project's settings overrides (S2c). */
+  settings?: SettingsOverrides;
+  /** Budget alerts already raised for the current limit. */
+  budget?: { warned: boolean; reached: boolean };
 }
 
 /** Latest version of a document-section entry; older versions live in the log (board_history). */
@@ -216,4 +222,14 @@ export interface TimerRecord {
 
 export function initialModel(): Model {
   return { pairing: {}, blockedOrigins: {}, agents: {}, projects: {}, repos: {}, timers: {}, providers: {} };
+}
+
+/** A project's settings: defaults, then the hub's, then the project's overrides. */
+export function settingsFor(model: Readonly<Model>, projectId: ProjectId | null | undefined): Settings {
+  return resolveSettings(model.hubSettings, projectId ? model.projects[projectId]?.settings : undefined);
+}
+
+/** What the project's hub-run agents have cost so far. */
+export function projectCost(model: Readonly<Model>, projectId: ProjectId): number {
+  return Object.values(model.agents).reduce((n, a) => n + (a.projectId === projectId && a.driven ? a.driven.costUsd : 0), 0);
 }

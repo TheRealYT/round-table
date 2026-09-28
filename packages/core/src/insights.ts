@@ -19,7 +19,7 @@ export interface InsightStep {
 }
 
 /** What started a turn: the hub's kickoff, a nudge from the board, or a message and who sent it. */
-export const TURN_TRIGGERS = ['kickoff', 'nudge', 'human', 'critical', 'hub', 'agent', 'broadcast', 'notice'] as const;
+export const TURN_TRIGGERS = ['kickoff', 'nudge', 'human', 'critical', 'request', 'response', 'hub', 'agent', 'broadcast', 'notice'] as const;
 export type TurnTrigger = (typeof TURN_TRIGGERS)[number];
 
 export interface TaskInsight {
@@ -98,6 +98,8 @@ export function turnTrigger(step: Pick<InsightStep, 'text' | 'data'>): TurnTrigg
   if (/^\[Round Table\] next:/.test(text)) return 'nudge';
   if (/HUMAN message|message from the human/.test(text)) return 'human';
   if (/CRITICAL message/.test(text)) return 'critical';
+  if (/message from the hub \(request/.test(text)) return 'request';
+  if (/message from the hub \(response/.test(text)) return 'response';
   if (/message from the hub/.test(text)) return 'hub';
   if (/^\[Round Table\] Your role changed/.test(text)) return 'notice';
   return 'agent';
@@ -371,7 +373,7 @@ function findings(wallMs: number, tasks: Omit<TaskInsight, never>[], agents: Age
     out.push({ weight: shortTurns * 10_000, text: `${shortTurns} of ${turns} turns (${share(shortTurns, turns)}) were under 5 s, mostly acknowledging a notice.` });
   }
   if (nonWork > 0) {
-    out.push({ weight: nonWork * 8_000, text: `${nonWork} turns were started by hub alerts or notices rather than work.` });
+    out.push({ weight: nonWork * 8_000, text: `${nonWork} turns were started by hub alerts, notices or broadcasts rather than a request or a board step.` });
   }
   if (totals.broadcasts > 0) {
     out.push({ weight: totals.broadcasts * 15_000, text: `${totals.broadcasts} message${totals.broadcasts === 1 ? ' was' : 's were'} sent to everyone, ${totals.deliveries} deliveries in all for ${totals.messages} messages.` });

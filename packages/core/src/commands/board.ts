@@ -11,10 +11,10 @@ import {
 import { z } from 'zod';
 import { authorOf, inProject, makeEvent, type Author } from '../event.ts';
 import { accept, reject, type Command, type CommandHandler, type Decision } from '../module.ts';
-import type { EntryRecord, Model, ProjectRecord } from '../model.ts';
+import { settingsFor, type EntryRecord, type Model, type ProjectRecord } from '../model.ts';
 import type { Ctx } from '../ports.ts';
 import { openOrRefreshChangeRequest } from './changes.ts';
-import { displayName, hubMessage, reachable } from './notify.ts';
+import { displayName, freeWorkers, hubMessage, reachable } from './notify.ts';
 
 /**
  * The board's write path (ADR-0007): agents propose, the registry routes each proposal to the hub
@@ -176,7 +176,7 @@ function sectionNotice(ctx: Ctx, project: ProjectRecord, section: string, summar
 export const commit: CommandHandler<{ ticketId?: TicketId; ticketIds?: TicketId[]; evidence: string[] }> = (model, command, ctx) => {
   const ids = [...new Set([...(command.input.ticketIds ?? []), ...(command.input.ticketId ? [command.input.ticketId] : [])])];
   if (ids.length === 0) return reject('invalid_input', 'give ticketId or ticketIds');
-  if (ids.length === 1) return commitOne(model, command, ctx, ids[0]!, new Map());
+  if (ids.length === 1) return withAutoApproval(model, command, ctx, commitOne(model, command, ctx, ids[0]!, new Map()));
   const made = new Map<string, string>();
   const events: PendingEvent[] = [];
   const committed: Array<{ ticketId: string; result: string }> = [];
@@ -202,8 +202,29 @@ export const commit: CommandHandler<{ ticketId?: TicketId; ticketIds?: TicketId[
   }
   for (const id of pending) rejected.push({ ticketId: id, code: 'dependency_cycle', message: 'its dependencies form a cycle' });
   if (committed.length === 0) return reject(rejected[0]!.code, rejected[0]!.message, { rejected }, events);
-  return accept(events, { committed, rejected });
+  return withAutoApproval(model, command, ctx, accept(events, { committed, rejected }));
 };
+
+/**
+ * Full auto (settings: plan approval by the leader, ADR-0020): the leader's commit is the approval,
+ * so its new tasks are ready at once and the free workers are told to claim them.
+ */
+function withAutoApproval(model: Readonly<Model>, command: Command, ctx: Ctx, decision: Decision): Decision {
+  if (!decision.ok || command.principal.kind !== 'leader') return decision;
+  const project = model.projects[command.principal.projectId];
+  if (!project || settingsFor(model, project.projectId).autonomy.planApproval !== 'leader') return decision;
+  const created = decision.events.filter((e) => e.type === 'task.created').map((e) => e.payload as { taskId: TaskId });
+  if (created.length === 0) return decision;
+  const author = { ...authorOf(command.principal), via: 'leader' as const };
+  const where = inProject(project.projectId);
+  const ready = created.map((t) => makeEvent(ctx, author, where, 'task.status_changed', { taskId: t.taskId, from: 'proposed', to: 'ready', cause: 'leader', reason: 'plan approved by the leader (full auto)' }, { refs: { task: [t.taskId] } }));
+  const notice = hubMessage(ctx, project.projectId, freeWorkers(project), {
+    priority: 'direct',
+    type: 'alert',
+    body: `The leader approved the plan: ${created.length} task${created.length === 1 ? ' is' : 's are'} ready. Claim one that fits you (board_read "tasks", then claim).`,
+  });
+  return { ...decision, events: [...decision.events, ...ready, ...notice] };
+}
 
 function commitOne(model: Readonly<Model>, command: Command<{ evidence: string[] }>, ctx: Ctx, ticketId: TicketId, made: ReadonlyMap<string, string>): Decision {
   const principal = command.principal;

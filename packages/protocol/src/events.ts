@@ -1,5 +1,6 @@
 import type { AgentId, ChangeRequestId, EntryId, PairingId, ProjectId, ProviderId, RepoId, RequestId, Sha, TaskId, TicketId } from './ids.ts';
 import type { ProviderSettings } from './providers.ts';
+import type { SettingsOverrides } from './settings.ts';
 import type { Criticality } from './entry.ts';
 import type { Refs } from './event.ts';
 import type { MessageType, Priority } from './message.ts';
@@ -62,6 +63,12 @@ export interface EventPayloads {
   'agent.turn_finished': { agentId: AgentId; ok: boolean; durationMs: number; costUsd: number | null; sessionCostUsd: number | null; inputTokens: number; outputTokens: number; error: string | null };
   'session.opened': { agentId: AgentId; projectId: ProjectId; epoch: number };
   'leader.assigned': { projectId: ProjectId; agentId: AgentId; previous: AgentId | null };
+  /** The human set a scope's settings: the whole override object for the hub, or for one project. */
+  'settings.changed': { scope: 'hub' | 'project'; projectId: ProjectId | null; overrides: SettingsOverrides };
+  /** The project's hub-run agents spent 80% of its budget. */
+  'budget.warned': { projectId: ProjectId; costUsd: number; limitUsd: number };
+  /** The project's hub-run agents reached its budget: the hub stopped them. */
+  'budget.reached': { projectId: ProjectId; costUsd: number; limitUsd: number };
   // ── project stream ──
   'roster.joined': { agentId: AgentId; name: string; role: 'worker' | 'leader'; tags: string[]; capabilities: string[]; client: string };
   'roster.connected': { agentId: AgentId; epoch: number };
@@ -118,7 +125,7 @@ export interface EventPayloads {
     ticketId: TicketId | null;
     proposer: string;
   };
-  'task.status_changed': { taskId: TaskId; from: string; to: string; cause: 'hub_rule' | 'done_rule' | 'human'; reason: string };
+  'task.status_changed': { taskId: TaskId; from: string; to: string; cause: 'hub_rule' | 'done_rule' | 'human' | 'leader'; reason: string };
   'task.claimed': { taskId: TaskId; owner: AgentId; branch: string };
   'task.released': { taskId: TaskId; owner: AgentId; handoffNote: string | null };
   'change_request.opened': { changeRequestId: ChangeRequestId; taskId: TaskId; repoId: RepoId; branch: string; headSha: Sha; author: AgentId };
@@ -182,6 +189,9 @@ export const EVENT_DURABILITY: { [K in EventType]: Durability } = {
   'agent.cli_session': 'durable',
   'agent.turn_finished': 'durable',
   'leader.assigned': 'durable',
+  'settings.changed': 'durable',
+  'budget.warned': 'durable',
+  'budget.reached': 'durable',
   'roster.joined': 'durable',
   'roster.connected': 'ephemeral',
   'roster.disconnected': 'ephemeral',
