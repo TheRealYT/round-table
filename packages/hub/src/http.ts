@@ -2,7 +2,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
+import { settingsFor } from '@round-table/core';
 import type { Hub } from './hub.ts';
+import { attachTerminal } from './terminal.ts';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -23,7 +25,7 @@ const LOCAL_HOST = /^(127\.0\.0\.1|localhost)(:\d+)?$/;
  */
 export function createHttpServer(hub: Hub, options: { appDir?: string; adminSecret?: string } = {}): Server {
   const appDir = options.appDir && existsSync(join(options.appDir, 'index.html')) ? resolve(options.appDir) : undefined;
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     if (!LOCAL_HOST.test(req.headers.host ?? '')) return send(res, 403, 'text/plain', 'Round Table only answers on 127.0.0.1');
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     // `rt hub login`: a new one-time login link for a running hub, for whoever can read the admin secret file.
@@ -39,6 +41,11 @@ export function createHttpServer(hub: Hub, options: { appDir?: string; adminSecr
     }
     serveStatic(appDir, url.pathname, req, res);
   });
+  attachTerminal(server, {
+    allowed: (cookie) => Boolean(cookie && hub.isHumanSession(cookie)) && settingsFor(hub.model, null).tools.terminal,
+    cwdFor: (projectId, worktree) => hub.terminalCwd(projectId, worktree),
+  });
+  return server;
 }
 
 function login(hub: Hub, url: URL, res: ServerResponse): void {

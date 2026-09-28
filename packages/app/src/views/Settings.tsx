@@ -228,6 +228,7 @@ export function SettingsForm({ scope, projectId }: { scope: 'hub' | 'project'; p
                 </div>
               );
             })}
+            {g.id === 'notifications' && <BrowserPermission />}
           </div>
         </section>
       ))}
@@ -236,6 +237,21 @@ export function SettingsForm({ scope, projectId }: { scope: 'hub' | 'project'; p
         <button type="submit" className="primary" disabled={saving || !dirty}>{saving ? 'Saving…' : dirty ? 'Save settings' : 'Saved'}</button>
       </div>
     </form>
+  );
+}
+
+/** Browsers show notifications only after the person allows them for this page. */
+function BrowserPermission() {
+  const supported = typeof Notification !== 'undefined';
+  const [state, setState] = useState(supported ? Notification.permission : 'denied');
+  if (!supported) return <p className="setting hint">This browser can’t show notifications.</p>;
+  return (
+    <div className="setting">
+      <div className="setting-label"><span className="small">This browser</span><span className="hint">{state === 'granted' ? 'Allowed: notifications show while the app is open in a tab.' : state === 'denied' ? 'Blocked. Allow notifications for this page in the browser’s site settings.' : 'Not allowed yet.'}</span></div>
+      <div className="setting-control">
+        {state === 'default' && <button type="button" className="sm" onClick={async () => setState(await Notification.requestPermission())}><Bell /> Allow in this browser</button>}
+      </div>
+    </div>
   );
 }
 

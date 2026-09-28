@@ -98,6 +98,7 @@ function Sidebar({ route, onSearch }: { route: Route; onSearch: () => void }) {
   const { data: pairing } = useQuery<{ requests: PairingRequest[] }>('pairing.list', {});
   const { data: providers } = useQuery<ProviderList>('provider.list', {}, { pollMs: 4_000 });
   const pending = pairing?.requests.filter((r) => r.status === 'pending').length ?? 0;
+  const needsYou = useNeedsYou();
   const hubAgents = (providers?.providers ?? []).flatMap((p) => p.agents);
   const running = hubAgents.filter((a) => a.run).length;
   const nav = (r: Route, icon: ReactNode, label: string, extra?: ReactNode) => {
@@ -118,7 +119,7 @@ function Sidebar({ route, onSearch }: { route: Route; onSearch: () => void }) {
       <button className="search-btn" onClick={onSearch}>
         <Search /> Search <span className="kbd">Ctrl K</span>
       </button>
-      {nav({ view: 'overview' }, <LayoutDashboard />, 'Overview')}
+      {nav({ view: 'overview' }, <LayoutDashboard />, 'Overview', needsYou > 0 ? <span className="count-badge hot count" title={`${needsYou} need${needsYou === 1 ? 's' : ''} you`}>{needsYou}</span> : undefined)}
       {nav({ view: 'agents' }, <Bot />, 'Agents', running > 0 ? <span className="count-badge count" title={`${running} running`}>{running}</span> : undefined)}
       {/* Pairing is for agents joining from a chat window; it shows when a request waits or you are there. */}
       {(pending > 0 || route.view === 'pairing') && nav({ view: 'pairing' }, <Link />, 'Pairing', pending > 0 ? <span className="count-badge hot count" title={`${pending} waiting`}>{pending}</span> : undefined)}
@@ -151,6 +152,40 @@ function Sidebar({ route, onSearch }: { route: Route; onSearch: () => void }) {
       </div>
     </nav>
   );
+}
+
+interface InboxItem { id: string; kind: string; urgent: boolean; projectId: string | null; title: string; detail: string }
+
+/**
+ * What needs the human, from the hub: the count shows on Overview and in the tab title, and new
+ * items raise a browser notification when Settings allow it (and the browser does).
+ */
+function useNeedsYou(): number {
+  const { data } = useQuery<{ items: InboxItem[] }>('inbox.list', {}, { pollMs: 4_000 });
+  const { data: settings } = useQuery<{ resolved: { notifications: { needsYou: boolean; critical: boolean } } }>('settings.get', {});
+  const seen = useRef<Set<string> | null>(null);
+  const items = data?.items ?? [];
+  useEffect(() => {
+    document.title = items.length ? `(${items.length}) Round Table` : 'Round Table';
+  }, [items.length]);
+  useEffect(() => {
+    if (!data) return;
+    const ids = new Set(data.items.map((i) => i.id));
+    const before = seen.current;
+    seen.current = ids;
+    if (!before || !settings?.resolved.notifications.needsYou) return; // the first load only sets what we've seen
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    for (const item of data.items) {
+      if (before.has(item.id)) continue;
+      const n = new Notification(item.title, { body: item.detail, tag: item.id });
+      n.onclick = () => {
+        window.focus();
+        if (item.projectId) go({ view: 'project', projectId: item.projectId });
+        else go({ view: item.kind === 'pairing' ? 'pairing' : 'overview' });
+      };
+    }
+  }, [data, settings]);
+  return items.length;
 }
 
 export function NewProject({ onDone }: { onDone: () => void }) {

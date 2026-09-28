@@ -66,6 +66,24 @@ describe('settings (S2c): hub-wide, overridden per project', () => {
     driver.of(started[1]!.agentId)!.endTurn({ sessionCostUsd: 0.2 });
     await expect.poll(() => t.hub.model.projects[projectId as never]!.budget?.reached).toBe(true);
     for (const s of started) expect(t.hub.model.agents[s.agentId as never]!.driven!.run).toBe(false);
+
+    // The human's inbox says so, first.
+    const inbox = await t.human.call<{ items: Array<{ kind: string; urgent: boolean; title: string }> }>('inbox.list', {});
+    expect(inbox.items[0]).toMatchObject({ kind: 'budget', urgent: true, title: 'P reached its budget' });
+  });
+
+  it('lists what needs the human: plans to approve and pairing requests', async () => {
+    t = await TestHub.start();
+    const lead = await t.pair('Lead', { newProjectName: 'Plan me' });
+    const projectId = lead.session.projectId;
+    await t.human.call('leader.assign', { projectId, agentId: lead.identity.agentId });
+    await t.human.call('goal.set', { projectId, goal: { objective: 'x' } });
+    const { ticketId } = await lead.client.call<{ ticketId: string }>('board_propose', { section: 'tasks', op: 'add', data: { title: 'T', criteria: ['c'] }, reason: 'r' });
+    await lead.client.call('board_commit', { ticketId });
+    const inbox = await t.human.call<{ items: Array<{ kind: string; title: string; detail: string }> }>('inbox.list', {});
+    expect(inbox.items).toContainEqual(expect.objectContaining({ kind: 'plan', title: 'Approve the plan in Plan me', detail: '1 task proposed' }));
+    await t.human.call('plan.approve', { projectId });
+    expect((await t.human.call<{ items: unknown[] }>('inbox.list', {})).items).toEqual([]);
   });
 
   it('gives hub-run agents the team rules, and the leader its own rules too', async () => {

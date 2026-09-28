@@ -12,6 +12,13 @@
   "dependencies": {
     "@round-table/core": "workspace:*",
     "@round-table/protocol": "workspace:*",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "ws": "^8.21.3"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

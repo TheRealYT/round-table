@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, evolve, initialModel, type Clock, type IdGen, type Model, type Random, type Settings } from '@round-table/core';
-import type { EventPayloads, TransportListener } from '@round-table/protocol';
+import type { EventPayloads, ProjectId, TransportListener } from '@round-table/protocol';
+import { worktrees } from './git-view.ts';
 import { fingerprint, randomToken, type KeyPair } from '@round-table/protocol/crypto';
 import { Bus } from './command-bus.ts';
 import type { GitHost, TestRunner } from './git.ts';
@@ -153,6 +154,21 @@ export class Hub {
     this.loginTokens.delete(token);
     if (expires === undefined || expires < this.clock.now()) return undefined;
     return this.createHumanSession();
+  }
+
+  isHumanSession(cookie: string): boolean {
+    return this.humanSessions.has(cookie);
+  }
+
+  /** Where the human's terminal may open: the project's repository, or one of its worktrees. */
+  async terminalCwd(projectId: string, worktree: string | null): Promise<string> {
+    const project = this.model.projects[projectId as ProjectId];
+    const repo = project?.repoId ? this.model.repos[project.repoId] : undefined;
+    if (!repo) throw new Error('this project has no repository attached yet');
+    if (!worktree) return repo.path;
+    const known = await worktrees(repo.path);
+    if (!known.some((w) => w.path === worktree)) throw new Error('not a worktree of this project’s repository');
+    return worktree;
   }
 
   createHumanSession(): string {

@@ -24,6 +24,7 @@ import {
 import { INTERNAL_COMMANDS, nextStep, settingsFor, type ProjectRecord } from '@round-table/core';
 import { boardGet, boardRead, boardView } from './board-queries.ts';
 import { projectInsights } from './insights.ts';
+import * as gitView from './git-view.ts';
 import type { HubInternals } from './internals.ts';
 import { ackDeliveries, pendingDeliveries } from './projectors/deliveries.ts';
 import { agentOf, RpcError, type Session } from './session.ts';
@@ -152,6 +153,50 @@ export class Router {
       'agent.interrupt': (session, input: { projectId: string; agentId: string }) => {
         this.drivenIn(session, input.projectId, input.agentId);
         return { ok: hub.supervisor?.interrupt(input.agentId) ?? false };
+      },
+      'git.branches': async (_session, input: { projectId: string }) => {
+        const { repo, project } = this.repoOf(input.projectId);
+        const list = await gitView.branches(repo.path, repo.mainBranch);
+        const byBranch = new Map(Object.values(project.tasks).filter((t) => t.branch).map((t) => [t.branch!, t]));
+        return { main: repo.mainBranch, branches: list.map((b) => ({ ...b, task: byBranch.has(b.name) ? { taskId: byBranch.get(b.name)!.taskId, title: byBranch.get(b.name)!.title, status: byBranch.get(b.name)!.status, owner: byBranch.get(b.name)!.owner } : null })) };
+      },
+      'git.log': async (_session, input: { projectId: string; ref?: string; limit: number }) => ({ commits: await gitView.log(this.repoOf(input.projectId).repo.path, { ...(input.ref && { ref: input.ref }), limit: input.limit }) }),
+      'git.show': async (_session, input: { projectId: string; sha: string }) => gitView.show(this.repoOf(input.projectId).repo.path, input.sha),
+      'git.diff': async (_session, input: { projectId: string; base: string; head: string }) => gitView.diff(this.repoOf(input.projectId).repo.path, input.base, input.head),
+      'git.worktrees': async (_session, input: { projectId: string }) => {
+        const { repo, project } = this.repoOf(input.projectId);
+        const list = await gitView.worktrees(repo.path);
+        const agents = Object.values(project.roster);
+        return { worktrees: list.map((w) => ({ ...w, agent: agents.find((a) => w.path.includes(a.agentId)) ?? null })).map((w) => ({ ...w, agent: w.agent ? { agentId: w.agent.agentId, name: w.agent.name } : null })) };
+      },
+      'git.worktree_diff': async (_session, input: { projectId: string; worktree: string }) => gitView.worktreeDiff(await this.worktreeOf(input.projectId, input.worktree)),
+      'git.tree': async (_session, input: { projectId: string; ref?: string; worktree?: string; path: string }) => {
+        const { repo } = this.repoOf(input.projectId);
+        if (input.worktree) return { entries: await gitView.worktreeTree(await this.worktreeOf(input.projectId, input.worktree), input.path) };
+        return { entries: await gitView.tree(repo.path, input.ref ?? repo.mainBranch, input.path) };
+      },
+      'git.file': async (_session, input: { projectId: string; ref?: string; worktree?: string; path: string }) => {
+        const { repo } = this.repoOf(input.projectId);
+        if (input.worktree) return gitView.worktreeFile(await this.worktreeOf(input.projectId, input.worktree), input.path);
+        return gitView.file(repo.path, input.ref ?? repo.mainBranch, input.path);
+      },
+      'inbox.list': () => {
+        type Item = { id: string; kind: 'plan' | 'pairing' | 'crashed' | 'budget'; urgent: boolean; projectId: string | null; title: string; detail: string; at: number };
+        const items: Item[] = [];
+        for (const r of Object.values(hub.model.pairing)) {
+          if (r.status === 'pending') items.push({ id: `pairing:${r.requestId}`, kind: 'pairing', urgent: false, projectId: null, title: `${r.name} asks to join`, detail: `from ${r.client}; check the phrase “${r.matchPhrase}”`, at: r.requestedAt ?? 0 });
+        }
+        for (const p of Object.values(hub.model.projects)) {
+          const proposed = Object.values(p.tasks).filter((t) => t.status === 'proposed');
+          if (proposed.length > 0) items.push({ id: `plan:${p.projectId}:${proposed.length}`, kind: 'plan', urgent: false, projectId: p.projectId, title: `Approve the plan in ${p.name}`, detail: `${proposed.length} task${proposed.length === 1 ? '' : 's'} proposed`, at: Math.max(...proposed.map((t) => t.createdAt)) });
+          const limit = settingsFor(hub.model, p.projectId).budget.projectUsd;
+          if (p.budget?.warned && limit > 0) items.push({ id: `budget:${p.projectId}:${p.budget.reached ? 'reached' : 'warned'}:${limit}`, kind: 'budget', urgent: Boolean(p.budget.reached), projectId: p.projectId, title: p.budget.reached ? `${p.name} reached its budget` : `${p.name} used 80% of its budget`, detail: p.budget.reached ? `Its agents were stopped at $${limit}. Raise the limit to go on.` : `The limit is $${limit}.`, at: 0 });
+        }
+        for (const a of Object.values(hub.model.agents)) {
+          const live = a.driven ? hub.supervisor?.state(a.agentId) : null;
+          if (live?.status === 'crashed') items.push({ id: `crashed:${a.agentId}:${live.since}`, kind: 'crashed', urgent: true, projectId: a.projectId, title: `${a.name} crashed`, detail: live.lastError ?? 'the CLI exited', at: live.since });
+        }
+        return { items: items.sort((x, y) => Number(y.urgent) - Number(x.urgent) || y.at - x.at) };
       },
       'settings.get': (_session, input: { projectId?: string }) => {
         const project = input.projectId ? hub.model.projects[input.projectId as ProjectId] : undefined;
@@ -330,6 +375,23 @@ export class Router {
   private drivenIn(session: Session, projectId: string, agentId: string): void {
     const agent = this.hub.model.agents[agentId as AgentId];
     if (!agent?.driven || agent.projectId !== this.projectFor(session, projectId)) throw new RpcError('rejected', 'no agent the hub runs with that id in this project');
+  }
+
+  /** The project's repository, for the read-only git queries. */
+  private repoOf(projectId: string) {
+    const project = this.hub.model.projects[projectId as ProjectId];
+    if (!project) throw new RpcError('rejected', 'no such project');
+    const repo = project.repoId ? this.hub.model.repos[project.repoId] : undefined;
+    if (!repo) throw new RpcError('rejected', 'this project has no repository attached yet');
+    return { project, repo };
+  }
+
+  /** A worktree path the human named, accepted only if it is one of the repository's worktrees. */
+  private async worktreeOf(projectId: string, path: string): Promise<string> {
+    const { repo } = this.repoOf(projectId);
+    const known = await gitView.worktrees(repo.path);
+    if (!known.some((w) => w.path === path)) throw new RpcError('rejected', 'not a worktree of this project’s repository');
+    return path;
   }
 
   private project(session: Session, projectId: string | undefined): ProjectRecord {

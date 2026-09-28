@@ -14,9 +14,13 @@
     "@round-table/agent": "workspace:*",
     "@round-table/core": "workspace:*",
     "@round-table/hub": "workspace:*",
-    "@round-table/protocol": "workspace:*"
+    "@round-table/protocol": "workspace:*",
+    "ws": "^8.21.3"
   },
   "peerDependencies": {
     "vitest": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

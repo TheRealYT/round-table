@@ -21,3 +21,5 @@ export { translate as translateClaudeEvent } from './drivers/claude-code.ts';
 export * from './drivers/antigravity.ts';
 export { agentEnv, detectBinary } from './drivers/process.ts';
 export * from './insights.ts';
+export * as gitView from './git-view.ts';
+export { openPty } from './terminal.ts';

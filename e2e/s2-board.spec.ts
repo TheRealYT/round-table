@@ -75,6 +75,20 @@ test('the human sets up the board in the app, approves the plan, and watches a t
   await expect(row).toContainText('merged');
   expect(repo.fileOnMain('greeting.txt')).toBe('hello there');
   await page.screenshot({ path: 'test-results/s2-board.png', fullPage: true });
+
+  // Code: the task's branch, what it changed, and the merge in the history.
+  await page.getByRole('tab', { name: /Code/ }).click();
+  const branchRow = page.locator('.git-list .git-row').filter({ has: page.getByText(branch, { exact: true }) });
+  await expect(branchRow).toContainText('Say hello there');
+  await page.getByRole('tab', { name: 'History' }).click();
+  await page.locator('.history .git-row', { hasText: 'friendlier' }).click();
+  await expect(page.locator('.diff-lines tr.add')).toContainText('hello there');
+
+  // The terminal: a shell in the repository.
+  await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+  await page.locator('.term-host').click();
+  await page.keyboard.type('echo term-$((6*7))\n');
+  await expect(page.locator('.term-host .xterm-rows')).toContainText('term-42', { timeout: 15_000 });
 });
 
 test('the app flags an agent whose model stopped calling tools, louder when work waits for it', async ({ page }) => {

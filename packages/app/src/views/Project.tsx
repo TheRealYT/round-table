@@ -1,6 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
-  Activity, ArrowRight, Gauge, Bot, CircleAlert, Coins, Cpu, FlaskConical, FolderGit2, GitMerge, GitPullRequest, KeyRound, LayoutGrid,
+  Activity, ArrowRight, Gauge, Code2, SquareTerminal, Bot, CircleAlert, Coins, Cpu, FlaskConical, FolderGit2, GitMerge, GitPullRequest, KeyRound, LayoutGrid,
   ListChecks, MessageSquare, PanelRightClose, Pause, Play, Radio, RotateCcw, Send, Settings2, SlidersHorizontal, Sparkles, Square, Terminal, UserPlus, Users, Wrench, Crown,
 } from 'lucide-react';
 import { go } from '../App.tsx';
@@ -14,6 +14,11 @@ import { StartAgentsSheet } from './StartAgents.tsx';
 import { AgentLog } from './AgentLog.tsx';
 import { InsightsTab } from './Insights.tsx';
 import { SettingsForm } from './Settings.tsx';
+import { CodeTab } from './Code.tsx';
+import type { TermTab } from './Terminal.tsx';
+
+// xterm is big: load the terminal only when the human opens one.
+const TerminalDock = lazy(() => import('./Terminal.tsx').then((m) => ({ default: m.TerminalDock })));
 
 const FEED_TYPES = [
   'human.posted', 'message.sent', 'roster.joined', 'roster.connected', 'roster.disconnected',
@@ -21,7 +26,7 @@ const FEED_TYPES = [
   'entry.versioned', 'task.status_changed', 'change_request.merged', 'agent.turn_finished',
 ];
 
-type Tab = 'table' | 'board' | 'changes' | 'activity' | 'insights' | 'setup';
+type Tab = 'table' | 'board' | 'changes' | 'code' | 'activity' | 'insights' | 'setup';
 
 export function ProjectView({ project, tab: routeTab }: { project: ProjectSummary; tab: string }) {
   const projectId = project.projectId;
@@ -39,7 +44,7 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
   const events = log?.events ?? [];
   const cost = agents.reduce((n, a) => n + (a.driven?.costUsd ?? 0), 0);
   const complete = view ? setupComplete(view) : true;
-  const tab: Tab = (['table', 'board', 'changes', 'activity', 'insights', 'setup'] as const).includes(routeTab as Tab) ? (routeTab as Tab) : 'table';
+  const tab: Tab = (['table', 'board', 'changes', 'code', 'activity', 'insights', 'setup'] as const).includes(routeTab as Tab) ? (routeTab as Tab) : 'table';
   const [defaulted, setDefaulted] = useState(false);
   useEffect(() => {
     // A new project opens on Setup until it has a goal, a repository and a test command.
@@ -54,10 +59,26 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
     { id: 'table', label: 'Table', icon: <Users />, count: agents.length },
     { id: 'board', label: 'Board', icon: <LayoutGrid />, count: view?.tasks.length },
     { id: 'changes', label: 'Changes', icon: <GitPullRequest />, count: changes?.records.length },
+    { id: 'code', label: 'Code', icon: <Code2 /> },
     { id: 'activity', label: 'Activity', icon: <Activity /> },
     { id: 'insights', label: 'Insights', icon: <Gauge /> },
     { id: 'setup', label: 'Setup', icon: <Settings2 />, dot: !complete },
   ];
+  // Terminals docked at the bottom: several at once, in the repo or an agent's worktree.
+  const [terms, setTerms] = useState<TermTab[]>([]);
+  const [activeTerm, setActiveTerm] = useState(0);
+  const nextTerm = useRef(1);
+  const openTerminal = (worktree: string | null) => {
+    const id = nextTerm.current++;
+    const who = worktree ? agents.find((a) => worktree.includes(a.agentId))?.name : undefined;
+    setTerms((t) => [...t, { id, worktree, label: worktree ? (who ? `${who}` : worktree.split('/').slice(-2).join('/')) : 'repo' }]);
+    setActiveTerm(id);
+  };
+  const closeTerminal = (id: number) => setTerms((t) => {
+    const rest = t.filter((x) => x.id !== id);
+    if (id === activeTerm && rest.length) setActiveTerm(rest.at(-1)!.id);
+    return rest;
+  });
   const lastSeen = useRef(0);
   const messages = events.filter((e) => e.type === 'message.sent' || e.type === 'human.posted');
   if (chat.open) lastSeen.current = messages.length;
@@ -86,6 +107,7 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
               </button>
             )}
             <button className={proposed > 0 ? '' : 'primary'} onClick={() => setStarting(true)}><UserPlus /> Start agents</button>
+            {view?.project.repo && <button onClick={() => (terms.length ? setTerms([]) : openTerminal(null))} aria-pressed={terms.length > 0} title="A shell on the hub machine, in the repository"><SquareTerminal /> Terminal</button>}
             {!chat.open && (
               <button onClick={() => chat.setOpen(true)} title="Open the conversation">
                 <MessageSquare /> Conversation{unread > 0 && <span className="count-badge hot">{unread}</span>}
@@ -117,6 +139,7 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
           {tab === 'table' && <TableTab projectId={projectId} agents={agents} events={events} cost={cost} view={view} onStart={() => setStarting(true)} />}
           {tab === 'board' && view && <Kanban view={view} name={name} />}
           {tab === 'changes' && <ChangesTable changes={changes?.records ?? []} name={name} />}
+          {tab === 'code' && <CodeTab projectId={projectId} hasRepo={Boolean(view?.project.repo)} name={name} onTerminal={openTerminal} />}
           {tab === 'activity' && <ActivityTimeline events={events} name={name} />}
           {tab === 'insights' && <InsightsTab projectId={projectId} />}
           {tab === 'setup' && view && (
@@ -129,6 +152,7 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
             </>
           )}
         </div>
+        {terms.length > 0 && <Suspense fallback={null}><TerminalDock projectId={projectId} tabs={terms} active={activeTerm} onActive={setActiveTerm} onClose={closeTerminal} onNew={() => openTerminal(null)} height={320} /></Suspense>}
       </div>
       {chat.open && (
         <aside className="chat-panel" aria-label="Conversation">

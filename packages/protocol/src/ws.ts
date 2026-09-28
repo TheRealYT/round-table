@@ -105,6 +105,7 @@ export class WsListener implements TransportListener {
     const server = new WebSocketServer({ noServer: true });
     httpServer.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
       const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      if (path === '/term') return; // the hub's terminal handles its own upgrades
       if (!(path in ENDPOINTS)) {
         socket.destroy();
         return;
