@@ -24,6 +24,7 @@ function start(overrides: Partial<DriverStart> = {}) {
       mcp: { command: 'node', args: ['rt', 'agent', 'run', '--driven'], env: { RT_HOME: '/data/agents/ada/home' } },
       systemPrompt: 'You are Ada, an AI agent on a Round Table team.',
       model: '',
+      effort: '',
       extraArgs: [],
       resumeSessionId: null,
       ...overrides,
@@ -88,11 +89,19 @@ describe('Antigravity driver (S8: agy 1.2.11)', () => {
     expect(turnEnds(events)).toHaveLength(0);
   });
 
+  it('passes the model and effort the human chose', async () => {
+    const { events, calls } = start({ model: 'gemini-3-pro', effort: 'high' });
+    proc!.send('[Round Table] You are Ada.');
+    await expect.poll(() => turnEnds(events).length).toBe(1);
+    expect(calls()[1]).toEqual(expect.arrayContaining(['--model', 'gemini-3-pro', '--effort', 'high']));
+  });
+
   it('resumes a known conversation without repeating the instructions, and unregisters its server on stop', async () => {
     const { events, calls } = start({ resumeSessionId: 'conv-123' });
     proc!.send('[Round Table] The Round Table restarted you.');
     await expect.poll(() => turnEnds(events).length).toBe(1);
     expect(calls()[1]).toEqual(expect.arrayContaining(['--conversation', 'conv-123']));
+    expect(calls()[1]).not.toContain('--effort');
     expect(calls()[1]![1]).toBe('[Round Table] The Round Table restarted you.');
     proc!.stop();
     proc = undefined;

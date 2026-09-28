@@ -27,6 +27,7 @@ export class ClaudeCodeDriver implements Driver {
       '--append-system-prompt', options.systemPrompt,
       ...session,
       ...(options.model ? ['--model', options.model] : []),
+      ...(options.effort ? ['--effort', options.effort] : []),
       ...options.extraArgs,
     ];
     const child = spawn(options.command || 'claude', args, { cwd: options.cwd, env: agentEnv(options.env), stdio: ['pipe', 'pipe', 'pipe'] });

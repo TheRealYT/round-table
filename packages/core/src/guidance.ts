@@ -37,17 +37,33 @@ function testCommand(project: ProjectRecord): string {
 }
 
 function leaderStep(project: ProjectRecord): NextStep {
-  const ticket = Object.values(project.tickets)
+  const open = Object.values(project.tickets)
     .filter((t) => t.status === 'open')
-    .sort((a, b) => a.openedAt - b.openedAt)[0];
-  if (ticket) {
+    .sort((a, b) => a.openedAt - b.openedAt);
+  if (open.length === 1) {
+    const ticket = open[0]!;
     return {
       tool: 'board_commit',
       step: `Review proposal ${ticket.ticketId} from ${name(project, ticket.proposer)} (${ticket.op} on ${ticket.section}: ${ticket.reason}); board_get ${ticket.ticketId} shows it. If it serves the goal and doesn't duplicate an existing task or entry, board_commit it; otherwise board_reject it with a reason.`,
     };
   }
+  if (open.length > 1) {
+    const list = open.map((t) => `${t.ticketId} (${t.section}, from ${name(project, t.proposer)}: ${t.reason})`).join('; ');
+    return {
+      tool: 'board_commit',
+      step: `Review the ${open.length} open proposals: ${list}. Commit the ones that serve the goal in one call, board_commit {ticketIds: [...]}, and board_reject duplicates with a reason.`,
+    };
+  }
   const tasks = Object.values(project.tasks);
-  if (!goalOf(project)) return { tool: 'wait', step: 'There is no goal yet; the human sets it in the app. Call wait now: it returns when the goal arrives.' };
+  const goal = goalOf(project);
+  if (!goal) return { tool: 'wait', step: 'There is no goal yet; the human sets it in the app. Call wait now: it returns when the goal arrives.' };
+  if (tasks.length === 0) {
+    const workers = Object.values(project.roster).filter((e) => e.role === 'worker' && (e.state === 'active' || e.state === 'stale')).length;
+    return {
+      tool: 'board_propose',
+      step: `Plan the goal "${goal}" yourself; the workers wait for your plan. Look at the repository if you need to (read only), then propose each task: board_propose {section: "tasks", op: "add", data: {title, criteria: [...], deps: [ticket ids of tasks it needs first]}, reason}. Keep tasks few and small, and have them touch different files so ${workers || 'the'} worker${workers === 1 ? '' : 's'} can work in parallel without conflicts. Then commit the whole plan in one call: board_commit {ticketIds: [...]}.`,
+    };
+  }
   if (tasks.some((t) => t.status === 'proposed')) {
     return { tool: 'wait', step: 'The plan is waiting for the human’s approval in the app. Call wait.' };
   }
@@ -90,6 +106,8 @@ function workerStep(project: ProjectRecord, me: AgentId): NextStep {
   const goal = goalOf(project);
   if (!goal) return { tool: 'wait', step: 'There is no goal yet; the human sets it in the app. Call wait now: it returns when the goal arrives.' };
   const planned = Object.values(project.tasks).length > 0;
+  // With a leader, the leader plans: one coherent plan instead of overlapping proposals to reject.
+  if (!planned && project.leaderId) return { tool: 'wait', step: 'The leader is drafting the plan. Call wait: it returns when tasks are ready.' };
   const myOpenTicket = Object.values(project.tickets).some((t) => t.proposer === me && t.status === 'open');
   const anyOpenTaskTicket = Object.values(project.tickets).some((t) => t.section === 'tasks' && t.status === 'open');
   if (!planned && !myOpenTicket && !anyOpenTaskTicket) {
@@ -135,7 +153,12 @@ function ownTaskStep(project: ProjectRecord, me: AgentId, task: TaskRecord, test
   const needsTest = !atHead(cr.testResults).some((t) => t.status === 'pass') && !openFromMe.some((r) => r.kind === 'test');
   if (needsReview || needsTest) {
     const peers = Object.values(project.roster).filter((e) => e.agentId !== me && e.role === 'worker' && (e.state === 'active' || e.state === 'stale'));
-    const reviewer = (task.reviewer && task.reviewer !== me ? task.reviewer : undefined) ?? peers[0]?.agentId;
+    // The least busy peer: fewest open requests, then no task of its own in hand.
+    const load = (id: AgentId) =>
+      Object.values(project.requests).filter((r) => r.to === id && r.status === 'open').length * 2 +
+      (Object.values(project.tasks).some((t) => t.owner === id && t.status !== 'done' && t.status !== 'cancelled') ? 1 : 0);
+    const idlest = [...peers].sort((x, y) => load(x.agentId) - load(y.agentId))[0];
+    const reviewer = (task.reviewer && task.reviewer !== me ? task.reviewer : undefined) ?? idlest?.agentId;
     const tester = (task.tester && task.tester !== me ? task.tester : undefined) ?? reviewer;
     if (!reviewer) return { tool: 'wait', step: `"${task.title}" needs a reviewer and tester, but no other worker is on the team yet. Call wait.` };
     const asks = [

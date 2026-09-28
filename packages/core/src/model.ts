@@ -31,6 +31,9 @@ export interface ProviderRecord {
 /** A hub-run agent (ADR-0018): what the supervisor needs to start, resume and account for it. */
 export interface DrivenAgent {
   providerId: ProviderId;
+  /** This agent's model and effort; empty: the provider's. */
+  model: string;
+  effort: string;
   /** The human's wish; the supervisor follows it, also after hub restarts. */
   run: boolean;
   cliSessionId: string | null;
@@ -154,6 +157,8 @@ export interface TicketRecord {
   quotesHumanMessage: string | null;
   status: 'open' | 'committed' | 'rejected';
   openedAt: number;
+  /** What a commit made of it (a task or entry id). */
+  result?: string;
 }
 
 export interface TaskRecord {

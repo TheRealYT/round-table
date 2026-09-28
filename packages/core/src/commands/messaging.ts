@@ -40,8 +40,15 @@ export const send: CommandHandler<{
   }
   const recipients = resolveRecipients(project, to, principal.agentId);
   if (!recipients.ok) return reject('unknown_recipient', 'some recipients are not on the roster', { unknown: recipients.unknown });
-  // A message addressed to specific agents is at least `direct` for them.
-  const priority: Priority = Array.isArray(to) && priorityRank(command.input.priority) > priorityRank('direct') ? 'direct' : command.input.priority;
+  // A message addressed to specific agents is at least `direct` for them. A worker's message to
+  // everyone is `normal` at most: it reaches everyone with their next turn but wakes nobody, so one
+  // status update doesn't cost a turn per agent. The leader keeps its priority (critical alerts).
+  const broadcast = !Array.isArray(to);
+  const priority: Priority = !broadcast && priorityRank(command.input.priority) > priorityRank('direct')
+    ? 'direct'
+    : broadcast && principal.kind === 'worker' && priorityRank(command.input.priority) < priorityRank('normal')
+      ? 'normal'
+      : command.input.priority;
   const messageId = ctx.ids.next('message');
   const payload: MessagePayload = {
     messageId,

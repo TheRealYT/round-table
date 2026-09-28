@@ -237,7 +237,7 @@ export class Router {
         return out;
       },
       // One key pair per agent, made here: core sees only the public half, the host stores the identity.
-      'agent.spawn': async (session, input: { projectId: string; providerId: string; names: string[]; tags: string[] }) => {
+      'agent.spawn': async (session, input: { projectId: string; providerId: string; names: string[]; tags: string[]; leader?: string; model?: string; effort?: string }) => {
         if (!hub.agentHost || !hub.supervisor) throw new RpcError('rejected', 'this hub was started without an agent host, so it can’t run agents');
         const started: Array<{ name: string; agentId: string }> = [];
         const failed: Array<{ name: string; error: string }> = [];
@@ -245,7 +245,7 @@ export class Router {
           const name = raw.trim();
           const key = generateIdentityKey();
           try {
-            const out = this.dispatch(session, 'agent.spawn', { projectId: input.projectId, providerId: input.providerId, name, tags: input.tags, publicKey: key.publicKey, fingerprint: fingerprint(key.publicKey) }) as { agentId: string };
+            const out = this.dispatch(session, 'agent.spawn', { projectId: input.projectId, providerId: input.providerId, name, tags: input.tags, publicKey: key.publicKey, fingerprint: fingerprint(key.publicKey), leader: input.leader?.toLowerCase() === name.toLowerCase(), ...(input.model && { model: input.model }), ...(input.effort && { effort: input.effort }) }) as { agentId: string };
             // The supervisor starts it as soon as the identity is stored.
             await hub.supervisor.provisioning(out.agentId, hub.agentHost.provision({ agentId: out.agentId, name, hubId: hub.hubId, hubPublicKey: hub.hubKey.publicKey, key }));
             started.push({ name, agentId: out.agentId });

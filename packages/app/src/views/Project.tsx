@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
-  Activity, ArrowRight, Bot, CircleAlert, Coins, Cpu, FlaskConical, FolderGit2, GitMerge, GitPullRequest, KeyRound, LayoutGrid,
+  Activity, ArrowRight, Gauge, Bot, CircleAlert, Coins, Cpu, FlaskConical, FolderGit2, GitMerge, GitPullRequest, KeyRound, LayoutGrid,
   ListChecks, MessageSquare, Pause, Play, Radio, RotateCcw, Send, Settings2, Sparkles, Square, Terminal, UserPlus, Users, Wrench,
 } from 'lucide-react';
 import { go } from '../App.tsx';
@@ -12,6 +12,7 @@ import { ChangesTable, Kanban, SetupPanel, setupComplete, type BoardOverview, ty
 import { StateDot } from './Pairing.tsx';
 import { StartAgentsSheet } from './StartAgents.tsx';
 import { AgentLog } from './AgentLog.tsx';
+import { InsightsTab } from './Insights.tsx';
 
 const FEED_TYPES = [
   'human.posted', 'message.sent', 'roster.joined', 'roster.connected', 'roster.disconnected',
@@ -19,7 +20,7 @@ const FEED_TYPES = [
   'entry.versioned', 'task.status_changed', 'change_request.merged', 'agent.turn_finished',
 ];
 
-type Tab = 'table' | 'board' | 'changes' | 'activity' | 'setup';
+type Tab = 'table' | 'board' | 'changes' | 'activity' | 'insights' | 'setup';
 
 export function ProjectView({ project, tab: routeTab }: { project: ProjectSummary; tab: string }) {
   const projectId = project.projectId;
@@ -39,7 +40,7 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
   const cost = agents.reduce((n, a) => n + (a.driven?.costUsd ?? 0), 0);
   const messages = events.filter((e) => e.type === 'message.sent' || e.type === 'human.posted').length;
   const complete = view ? setupComplete(view) : true;
-  const tab: Tab = (['table', 'board', 'changes', 'activity', 'setup'] as const).includes(routeTab as Tab) ? (routeTab as Tab) : 'table';
+  const tab: Tab = (['table', 'board', 'changes', 'activity', 'insights', 'setup'] as const).includes(routeTab as Tab) ? (routeTab as Tab) : 'table';
   const [defaulted, setDefaulted] = useState(false);
   useEffect(() => {
     // A new project opens on Setup until it has a goal, a repository and a test command.
@@ -55,6 +56,7 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
     { id: 'board', label: 'Board', icon: <LayoutGrid />, count: view?.tasks.length },
     { id: 'changes', label: 'Changes', icon: <GitPullRequest />, count: changes?.records.length },
     { id: 'activity', label: 'Activity', icon: <Activity /> },
+    { id: 'insights', label: 'Insights', icon: <Gauge /> },
     { id: 'setup', label: 'Setup', icon: <Settings2 />, dot: !complete },
   ];
 
@@ -112,6 +114,7 @@ export function ProjectView({ project, tab: routeTab }: { project: ProjectSummar
           {tab === 'board' && view && <Kanban view={view} name={name} />}
           {tab === 'changes' && <ChangesTable changes={changes?.records ?? []} name={name} />}
           {tab === 'activity' && <ActivityTimeline events={events} name={name} />}
+          {tab === 'insights' && <InsightsTab projectId={projectId} />}
           {tab === 'setup' && view && <SetupPanel projectId={projectId} view={view} />}
         </div>
         {chatOpen && <aside className="project-side" aria-label="Feed">

@@ -20,8 +20,8 @@ export function serverInstructions(waitSeconds: number, named = false): string {
 /** What each role does, told at pairing and whenever the role changes. */
 export function roleBrief(role: string): string {
   return role === 'leader'
-    ? 'As the leader you coordinate only: review proposals and board_commit or board_reject them, answer questions with send, and keep the team moving. You never write code, review or test.'
-    : 'As a worker you propose tasks for the goal, claim ready tasks, implement them in this folder (your git worktree) on the task’s branch, open change requests, get another worker to review and test them, and review or test others’ work when asked. You never approve your own work.';
+    ? 'As the leader you plan and coordinate: you turn the goal into a plan of small tasks that touch different files, commit it in one board_commit, review proposals, answer questions with send, and keep the team moving. You never write code, review or test.'
+    : 'As a worker you claim ready tasks (the leader plans them), implement them in this folder (your git worktree) on the task’s branch, open change requests, get another worker to review and test them, and review or test others’ work when asked. You never approve your own work.';
 }
 
 /** Appended to every step, because models otherwise end their turn to chat. */

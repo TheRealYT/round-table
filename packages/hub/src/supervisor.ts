@@ -86,6 +86,8 @@ interface Live extends LiveState {
   notices: string[];
   /** What the messages taken for the next turn were, for the turn's trigger (insights). */
   taken: TurnTrigger | null;
+  /** Its model or effort changed mid-turn: restart once the turn ends. */
+  restartAfterTurn: boolean;
 }
 
 export interface SupervisorOptions {
@@ -98,6 +100,8 @@ export interface SupervisorOptions {
   now: () => number;
   maxChars: number;
   restartDelaysMs: number[];
+  /** How long to gather a burst of agent messages into one turn. */
+  coalesceMs: number;
   log?: (message: string) => void;
 }
 
@@ -110,6 +114,7 @@ export class Supervisor {
   private readonly o: SupervisorOptions;
   private readonly live = new Map<string, Live>();
   private pumpQueued = false;
+  private pumpDelayed: ReturnType<typeof setTimeout> | undefined;
   /** Identities being stored for new agents; their first start waits for it. */
   private readonly provisions = new Map<string, Promise<void>>();
   private closed = false;
@@ -136,13 +141,17 @@ export class Supervisor {
   onCommit(rows: EventRow[]): void {
     for (const row of rows) {
       if (row.type === 'agent.run_requested') this.reconcile((row.payload as { agentId: string }).agentId, true);
+      if (row.type === 'agent.configured') this.restartWhenIdle((row.payload as { agentId: string }).agentId);
       if (row.type === 'roster.role_changed') {
         const { agentId, role } = row.payload as { agentId: string; role: string };
         const live = this.live.get(agentId);
         if (live) live.notices.push(`[Round Table] Your role changed: you are now the ${role}. ${roleBrief(role)}`);
       }
     }
-    this.queuePump();
+    // Agent messages often come in bursts (a request, then a note): wait a moment so they make one
+    // turn. The human never waits.
+    const burst = rows.some((r) => r.type === 'message.sent') && !rows.some((r) => r.type === 'human.posted');
+    this.queuePump(burst ? this.o.coalesceMs : 0);
   }
 
   /** The router stores a new agent's identity; the agent starts once it is written. */
@@ -178,6 +187,7 @@ export class Supervisor {
   /** Stop every process (hub shutdown); wished states stay as they are for the next start. */
   close(): void {
     this.closed = true;
+    clearTimeout(this.pumpDelayed);
     for (const live of this.live.values()) {
       clearTimeout(live.restartTimer);
       live.generation += 1;
@@ -206,10 +216,26 @@ export class Supervisor {
     if (!live.proc && live.status !== 'starting') void this.start(agentId);
   }
 
+  /** New model or effort: restart the CLI (it resumes its conversation) now if idle, else after this turn. */
+  private restartWhenIdle(agentId: string): void {
+    const live = this.live.get(agentId);
+    if (!live?.proc) return;
+    if (live.status !== 'idle') {
+      live.restartAfterTurn = true;
+      return;
+    }
+    live.restartAfterTurn = false;
+    live.generation += 1;
+    live.proc.stop();
+    live.proc = undefined;
+    this.note(agentId, 'status', 'restarting with its new model or effort');
+    void this.start(agentId);
+  }
+
   private entry(agentId: string): Live {
     let live = this.live.get(agentId);
     if (!live) {
-      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0, notices: [], taken: null };
+      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0, notices: [], taken: null, restartAfterTurn: false };
       this.live.set(agentId, live);
     }
     return live;
@@ -232,7 +258,9 @@ export class Supervisor {
       const env = providerEnv(provider, this.o.secrets);
       const project = this.o.model.projects[agent.projectId];
       const repo = project?.repoId ? this.o.model.repos[project.repoId] : undefined;
-      const workspace = await this.o.host.prepare({ agentId, name: agent.name, repo: repo ? { path: repo.path, mainBranch: repo.mainBranch } : null });
+      const prepared = await this.o.host.prepare({ agentId, name: agent.name, repo: repo ? { path: repo.path, mainBranch: repo.mainBranch } : null });
+      // A CLI that follows tools/list_changed gets only its role's tools: fewer tokens every turn.
+      const workspace = kind.dynamicTools ? { ...prepared, mcp: { ...prepared.mcp, args: [...prepared.mcp.args, '--tools', 'dynamic'] } } : prepared;
       if (generation !== live.generation || this.closed) return;
       const resumed = driven.cliSessionId !== null;
       live.proc = driver.start(
@@ -244,7 +272,8 @@ export class Supervisor {
           env,
           mcp: workspace.mcp,
           systemPrompt: systemPrompt(agent.name),
-          model: provider.settings.model,
+          model: driven.model || provider.settings.model,
+          effort: driven.effort || provider.settings.effort,
           extraArgs: provider.settings.extraArgs,
           resumeSessionId: driven.cliSessionId,
         },
@@ -296,7 +325,8 @@ export class Supervisor {
         this.o.bus.dispatch('agent.turn', { agentId, ok: event.ok, durationMs: event.durationMs, costUsd, sessionCostUsd: event.sessionCostUsd, inputTokens: event.inputTokens, outputTokens: event.outputTokens, error: event.error }, HUB);
         this.note(agentId, 'turn', `${event.ok ? 'turn done' : `turn ended: ${event.error}`} (${Math.round(event.durationMs / 1000)} s${costUsd === null ? '' : `, $${costUsd.toFixed(3)}`})`, { ok: event.ok, durationMs: event.durationMs, costUsd, tokens: event.inputTokens + event.outputTokens, error: event.error });
         this.setStatus(live, 'idle');
-        this.queuePump();
+        if (live.restartAfterTurn) this.restartWhenIdle(agentId);
+        else this.queuePump();
         return;
       }
       case 'exit': {
@@ -326,23 +356,37 @@ export class Supervisor {
 
   // ── the loop ───────────────────────────────────────────────────────────────────────────
 
-  private queuePump(): void {
-    if (this.pumpQueued || this.closed) return;
+  private queuePump(delayMs = 0): void {
+    if (this.closed) return;
+    if (this.pumpQueued) {
+      // A pump is already coming; an urgent one moves it forward.
+      if (delayMs > 0 || this.pumpDelayed === undefined) return;
+      clearTimeout(this.pumpDelayed);
+      this.pumpDelayed = undefined;
+    }
     this.pumpQueued = true;
-    setImmediate(() => {
+    const run = () => {
       this.pumpQueued = false;
+      this.pumpDelayed = undefined;
       for (const [agentId, live] of this.live) if (live.status === 'idle' && live.proc) this.pump(agentId, live);
-    });
+    };
+    if (delayMs > 0) {
+      this.pumpDelayed = setTimeout(run, delayMs);
+      this.pumpDelayed.unref?.();
+    } else setImmediate(run);
   }
 
   /** An idle agent: hand it its messages, or the next step the board gives it. */
   private pump(agentId: string, live: Live): void {
     const agent = this.o.model.agents[agentId as AgentId];
     if (!agent) return;
+    const step = nextStep(this.o.model, agent.projectId, agent.agentId);
+    // Only messages that ask something of this agent wake it (human, critical, direct). Normal and
+    // digest ones (broadcasts, FYIs) ride along with its next turn, so they cost no turn of their own.
+    if (live.notices.length === 0 && !this.hasWaking(agentId) && !this.wantsStep(live, step)) return;
     const notices = live.notices.splice(0);
     const taken = this.takeMessages(agentId, live);
     const messages = [...notices, taken].filter(Boolean).join('\n') || undefined;
-    const step = nextStep(this.o.model, agent.projectId, agent.agentId);
     if (messages) {
       // Messages, then what the board wants next, so the turn ends with a clear step.
       live.lastStep = step.tool === 'wait' ? null : step.step;
@@ -362,6 +406,15 @@ export class Supervisor {
       live.sameStep = 1;
     }
     this.sendTurn(agentId, live, `[Round Table] next: ${step.step}`, 'nudge');
+  }
+
+  private hasWaking(agentId: string): boolean {
+    return (this.o.store.reader.get<{ n: number }>("SELECT COUNT(*) AS n FROM deliveries WHERE agent_id = ? AND acked_at IS NULL AND priority IN ('human', 'critical', 'direct')", [agentId])?.n ?? 0) > 0;
+  }
+
+  /** The board has a step for this agent that it hasn't been asked too often already. */
+  private wantsStep(live: Live, step: { tool: string; step: string }): boolean {
+    return step.tool !== 'wait' && !(step.step === live.lastStep && live.sameStep >= SAME_STEP_MAX);
   }
 
   private kickoff(agentId: string, resumed: boolean): string {
@@ -432,13 +485,16 @@ export class Supervisor {
 }
 
 function nextLine(step: { tool: string; step: string }): string {
-  return step.tool === 'wait' ? '[Round Table] next: nothing else needs you right now. End your turn when done; you are woken when something arrives.' : `[Round Table] next: ${step.step}`;
+  if (step.tool !== 'wait') return `[Round Table] next: ${step.step}`;
+  // Hub-run agents don't call wait: keep why they are waiting, then tell them to end the turn.
+  const why = step.step.replace(/\s*Call wait\b.*$/s, '').trim();
+  return `[Round Table] next: ${why && !/^Nothing needs you/.test(why) ? `${why} ` : 'nothing else needs you right now. '}End your turn when done; you are woken when something arrives.`;
 }
 
 function roleBrief(role: string): string {
   return role === 'leader'
-    ? 'As the leader you coordinate only: review proposals and board_commit or board_reject them, answer questions with send, and keep the team moving. You never write code, review or test.'
-    : 'As a worker you propose tasks for the goal, claim ready tasks, implement them in this folder (your git worktree) on the task’s branch, open change requests, get another worker to review and test them, and review or test others’ work when asked. You never approve your own work.';
+    ? 'As the leader you plan and coordinate: you turn the goal into a plan of small tasks that touch different files, commit it in one board_commit, review proposals, answer questions with send, and keep the team moving. You never write code, review or test.'
+    : 'As a worker you claim ready tasks (the leader plans them), implement them in this folder (your git worktree) on the task’s branch, open change requests, get another worker to review and test them, and review or test others’ work when asked. You never approve your own work.';
 }
 
 function systemPrompt(name: string): string {

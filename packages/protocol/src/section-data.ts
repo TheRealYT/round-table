@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AgentId, TaskId } from './ids.ts';
+import { AgentId, TaskId, TicketId } from './ids.ts';
 
 /**
  * `data` schemas per board section (ADR-0007). A proposal or human edit is validated against the
@@ -42,7 +42,8 @@ export const TaskProposal = z.object({
   criteria: z.array(z.string().min(1)).min(1),
   reviewer: AgentId.optional(),
   tester: AgentId.optional(),
-  deps: z.array(TaskId).default([]),
+  /** Tasks this one waits for: task ids, or ticket ids of tasks proposed in the same plan. */
+  deps: z.array(z.union([TaskId, TicketId])).default([]),
   capabilities: z.array(z.string()).default([]),
 });
 export type TaskProposal = z.infer<typeof TaskProposal>;

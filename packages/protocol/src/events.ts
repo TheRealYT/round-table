@@ -51,7 +51,9 @@ export interface EventPayloads {
   /** A credential was stored or cleared by the hub; the value itself never enters the log. */
   'provider.secret_changed': { providerId: ProviderId; set: boolean; /** null: the API key; else a secret env var. */ name?: string | null };
   /** The hub started an agent from a provider: it issued the identity itself (no pairing). */
-  'agent.provisioned': { agentId: AgentId; projectId: ProjectId; providerId: ProviderId; name: string; tags: string[]; publicKey: string; fingerprint: string };
+  'agent.provisioned': { agentId: AgentId; projectId: ProjectId; providerId: ProviderId; name: string; tags: string[]; publicKey: string; fingerprint: string; /** Overrides of the provider's model and effort; empty: the provider's. */ model?: string; effort?: string };
+  /** The human changed a hub-run agent's model or effort (empty: the provider's); applied at its next idle moment. */
+  'agent.configured': { agentId: AgentId; model: string; effort: string };
   /** The human wants the agent running or stopped; the supervisor follows it, also after restarts. */
   'agent.run_requested': { agentId: AgentId; run: boolean };
   /** The CLI's own session id, so a restarted process resumes the same conversation. */
@@ -176,6 +178,7 @@ export const EVENT_DURABILITY: { [K in EventType]: Durability } = {
   'provider.secret_changed': 'durable',
   'agent.provisioned': 'durable',
   'agent.run_requested': 'durable',
+  'agent.configured': 'durable',
   'agent.cli_session': 'durable',
   'agent.turn_finished': 'durable',
   'leader.assigned': 'durable',

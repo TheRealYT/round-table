@@ -4,7 +4,7 @@ import { accept, reject, type CommandHandler } from '../module.ts';
 import type { ProjectRecord, TaskRecord } from '../model.ts';
 import type { Ctx } from '../ports.ts';
 import { canTransition, type TaskStatus, type TransitionCause } from '../tasks/status.ts';
-import { displayName, hubMessage, reachable } from './notify.ts';
+import { displayName, freeWorkers, hubMessage } from './notify.ts';
 
 /** A status change, checked against the task state machine. Throws on an illegal move: that is a bug in a handler. */
 export function moveTask(
@@ -35,7 +35,8 @@ export const approvePlan: CommandHandler<{ projectId: ProjectId }> = (model, com
   const author = authorOf(command.principal);
   const events = proposed.map((t) => moveTask(ctx, author, project, t, 'ready', 'human', 'plan approved by the human'));
   events.push(
-    ...hubMessage(ctx, project.projectId, reachable(project), {
+    // Only workers without a task need to act on it; the leader and busy workers see it on the board.
+    ...hubMessage(ctx, project.projectId, freeWorkers(project), {
       priority: 'direct',
       type: 'alert',
       body: `The human approved the plan: ${proposed.length} task${proposed.length === 1 ? ' is' : 's are'} ready. Claim one that fits you (board_read "tasks", then claim).`,

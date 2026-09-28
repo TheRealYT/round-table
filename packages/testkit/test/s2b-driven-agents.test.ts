@@ -122,6 +122,67 @@ describe('the supervisor runs the agents (ADR-0018)', () => {
     expect(ada.sent).toHaveLength(2); // acked: not sent again
   });
 
+  it('starts the named agent as the leader, so its first turn already plans', async () => {
+    const { driver, projectId, providerId } = await setup();
+    await t.human.call('goal.set', { projectId, goal: { objective: 'Build tic-tac-toe' } });
+    const { started } = await t.human.call<{ started: Array<{ name: string; agentId: string }> }>('agent.spawn', { projectId, providerId, names: ['Lead', 'Ada'], leader: 'Lead' });
+    await expect.poll(() => driver.started.length).toBe(2);
+    const lead = driver.of(started[0]!.agentId)!;
+    const ada = driver.of(started[1]!.agentId)!;
+    expect(lead.sent[0]).toContain('You are Lead, the leader');
+    expect(lead.sent[0]).toContain('Plan the goal "Build tic-tac-toe" yourself');
+    expect(ada.sent[0]).toContain('The leader is drafting the plan');
+    expect(t.hub.model.projects[projectId as never]!.leaderId).toBe(started[0]!.agentId);
+  });
+
+  it('runs each agent with its own model and effort, and restarts an idle agent (resuming) when they change', async () => {
+    const { driver, projectId, providerId } = await setup();
+    await t.human.call('provider.save', { providerId, settings: { ...CLAUDE, effort: 'medium' } });
+    const bad = await spawn(projectId, providerId, ['Ada']).catch((e: Error) => e);
+    expect(bad).not.toBeInstanceOf(Error);
+    const rejected = await t.human.call('agent.spawn', { projectId, providerId, names: ['Bo'], effort: 'turbo' }).then((r) => r as { failed: Array<{ error: string }> });
+    expect(rejected.failed[0]!.error).toContain('effort must be one of low, medium, high, xhigh, max');
+    await expect.poll(() => driver.started.length).toBe(1);
+    const agentId = (bad as { started: Array<{ agentId: string }> }).started[0]!.agentId;
+    const first = driver.of(agentId)!;
+    expect(first.options).toMatchObject({ model: 'sonnet', effort: 'medium' });
+    expect(first.options.mcp.args).toEqual(expect.arrayContaining(['--tools', 'dynamic'])); // Claude Code follows list_changed
+    first.emit({ type: 'session', sessionId: 'sess-ada' });
+    first.endTurn();
+    await expect.poll(() => live(projectId, 'Ada')).toBe('idle');
+
+    await t.human.call('agent.configure', { projectId, agentId, model: 'opus', effort: 'max' });
+    await expect.poll(() => driver.started.length).toBe(2);
+    expect(first.stopped).toBe(true);
+    expect(driver.of(agentId)!.options).toMatchObject({ model: 'opus', effort: 'max', resumeSessionId: 'sess-ada' });
+  });
+
+  it('wakes agents only for messages meant for them: a worker’s message to everyone rides along with their next turn', async () => {
+    const { driver, projectId, providerId } = await setup();
+    const { started } = await spawn(projectId, providerId, ['Ada', 'Bo']);
+    await expect.poll(() => driver.started.length).toBe(2);
+    const [adaId, boId] = started.map((s) => s.agentId) as [string, string];
+    const ada = driver.of(adaId)!;
+    const bo = driver.of(boId)!;
+    ada.endTurn();
+    bo.endTurn();
+    await expect.poll(() => live(projectId, 'Bo')).toBe('idle');
+    const asAda = { kind: 'worker', agentId: adaId, projectId, epoch: 1 };
+
+    // Ada tells everyone (even at direct): Bo isn't woken for it.
+    expect(t.hub.bus.dispatch('send', { to: 'all', type: 'chat', body: 'FYI: I use tabs.', priority: 'direct' }, asAda as never).ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(bo.sent).toHaveLength(1);
+
+    // A message to Bo by name wakes him, and the FYI comes along in the same turn.
+    t.hub.bus.dispatch('send', { to: [boId], type: 'chat', body: 'Can you review my branch?', priority: 'normal' }, asAda as never);
+    await expect.poll(() => bo.sent.length).toBe(2);
+    expect(bo.last).toContain('message from Ada (chat): Can you review my branch?');
+    expect(bo.last).toContain('FYI: I use tabs.');
+    const steps = await t.human.call<{ entries: Array<{ kind: string; data: { trigger?: string } | null }> }>('agent.transcript', { projectId, agentId: boId });
+    expect(steps.entries.filter((e) => e.kind === 'to_agent').map((e) => e.data?.trigger)).toEqual(['kickoff', 'agent']);
+  });
+
   it('gives an idle agent the work the board has for it, but doesn’t nag when it doesn’t move', async () => {
     const { driver, projectId, providerId } = await setup();
     const { started } = await spawn(projectId, providerId, ['Ada']);

@@ -5,7 +5,7 @@ import { createProject } from './projects.ts';
 import { commit, humanEdit, propose, rejectTicket } from './board.ts';
 import { mergeResult, openRequest, respond } from './changes.ts';
 import { attachRepo } from './repos.ts';
-import { markProviderSecret, recordCliSession, recordTurn, removeProvider, saveProvider, setAgentRun, spawnAgent } from './drivers.ts';
+import { configureAgent, markProviderSecret, recordCliSession, recordTurn, removeProvider, saveProvider, setAgentRun, spawnAgent } from './drivers.ts';
 import { approvePlan, claim, release } from './tasks.ts';
 import { assignLeader, closeSession, markGone, markStale, openSession } from './sessions.ts';
 
@@ -40,6 +40,7 @@ export const COMMANDS: Record<string, CommandHandler> = {
   'provider.remove': removeProvider,
   'agent.spawn': spawnAgent,
   'agent.run': setAgentRun,
+  'agent.configure': configureAgent,
   // internal: router (credentials) and supervisor
   'provider.secret_mark': markProviderSecret,
   'agent.cli_session': recordCliSession,

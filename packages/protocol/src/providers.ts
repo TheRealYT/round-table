@@ -20,6 +20,12 @@ export interface ProviderKindDef {
   driverVerified: boolean;
   /** Model names to offer; any string is accepted. */
   models: readonly string[];
+  /** Arguments that make the CLI list its models, one per line (e.g. `agy models`). */
+  listModels?: readonly string[];
+  /** Reasoning effort levels the CLI takes with `--effort`, lowest first; empty when it has none. */
+  efforts: readonly string[];
+  /** The CLI follows MCP tools/list_changed, so each agent sees only its role's tools. */
+  dynamicTools: boolean;
   /** Environment variables people commonly set for this CLI (endpoints, proxies); offered, not enforced. */
   envHints: readonly string[];
 }
@@ -33,7 +39,9 @@ export const PROVIDER_KINDS = [
     login: 'Run `claude` once on the hub machine and log in.',
     install: 'npm i -g @anthropic-ai/claude-code',
     driverVerified: true,
-    models: ['sonnet', 'opus', 'haiku'],
+    models: ['fable', 'opus', 'sonnet', 'haiku'],
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max'], // claude --help, 2.1.283
+    dynamicTools: true, // S0: Claude Code refreshes tools on list_changed
     envHints: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'HTTPS_PROXY', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'DISABLE_TELEMETRY'],
   },
   {
@@ -45,6 +53,8 @@ export const PROVIDER_KINDS = [
     install: 'npm i -g @openai/codex',
     driverVerified: false,
     models: [],
+    efforts: [],
+    dynamicTools: false,
     envHints: ['OPENAI_BASE_URL', 'HTTPS_PROXY'],
   },
   {
@@ -57,6 +67,9 @@ export const PROVIDER_KINDS = [
     install: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     driverVerified: true, // S8 check 6/6 on agy 1.2.11 (2026-09-26)
     models: [],
+    listModels: ['models'],
+    efforts: ['low', 'medium', 'high', 'max'], // agy --help, 1.2.11
+    dynamicTools: false,
     envHints: ['HTTPS_PROXY'],
   },
   {
@@ -68,6 +81,8 @@ export const PROVIDER_KINDS = [
     install: 'curl https://cursor.com/install -fsS | bash',
     driverVerified: false,
     models: [],
+    efforts: [],
+    dynamicTools: false,
     envHints: ['HTTPS_PROXY'],
   },
   {
@@ -79,6 +94,8 @@ export const PROVIDER_KINDS = [
     install: 'npm i -g opencode-ai',
     driverVerified: false,
     models: [],
+    efforts: [],
+    dynamicTools: false,
     envHints: ['OPENAI_BASE_URL', 'HTTPS_PROXY'],
   },
 ] as const satisfies readonly ProviderKindDef[];
@@ -105,6 +122,8 @@ export const ProviderSettings = z.object({
   command: z.string().max(500).default(''),
   auth: ProviderAuth.default('cli-login'),
   model: z.string().max(100).default(''),
+  /** Reasoning effort for every agent from this provider, one of the kind's `efforts`; empty: the CLI's default. */
+  effort: z.string().max(20).default(''),
   extraArgs: z.array(z.string().max(200)).max(20).default([]),
   maxInstances: z.number().int().min(1).max(20).default(3),
   /** Extra environment for every agent from this provider, e.g. an API endpoint or a proxy. Stored in the log. */

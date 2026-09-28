@@ -116,8 +116,12 @@ const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
       epoch: 0,
       revoked: false,
       pairedAt: e.ts,
-      driven: { providerId: p.providerId, run: false, cliSessionId: null, sessionCostUsd: 0, turns: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, lastTurnAt: null, lastError: null },
+      driven: { providerId: p.providerId, model: p.model ?? '', effort: p.effort ?? '', run: false, cliSessionId: null, sessionCostUsd: 0, turns: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, lastTurnAt: null, lastError: null },
     };
+  },
+  'agent.configured': (m, p) => {
+    const d = m.agents[p.agentId]?.driven;
+    if (d) Object.assign(d, { model: p.model, effort: p.effort });
   },
   'agent.run_requested': (m, p) => {
     const d = m.agents[p.agentId]?.driven;
@@ -237,7 +241,7 @@ const FOLDS: { [K in keyof EventPayloads]?: Folder<K> } = {
   },
   'ticket.committed': (m, p, e) => {
     const t = projectOf(m, e)?.tickets[p.ticketId];
-    if (t) t.status = 'committed';
+    if (t) Object.assign(t, { status: 'committed', result: p.result });
   },
   'ticket.rejected': (m, p, e) => {
     const t = projectOf(m, e)?.tickets[p.ticketId];

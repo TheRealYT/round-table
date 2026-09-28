@@ -79,7 +79,7 @@ export class Hub {
     const secrets = options.secrets ?? new MemorySecretStore();
     const drivers = options.drivers ?? { 'claude-code': new ClaudeCodeDriver(), antigravity: new AntigravityDriver() };
     this.supervisor = options.agentHost
-      ? new Supervisor({ model: this.model, bus: this.bus, store: this.store, secrets, host: options.agentHost, drivers, now: () => clock.now(), maxChars: config.waitMaxChars, restartDelaysMs: config.restartDelaysMs, ...(options.log && { log: options.log }) })
+      ? new Supervisor({ model: this.model, bus: this.bus, store: this.store, secrets, host: options.agentHost, drivers, now: () => clock.now(), maxChars: config.waitMaxChars, restartDelaysMs: config.restartDelaysMs, coalesceMs: config.coalesceMs, ...(options.log && { log: options.log }) })
       : undefined;
     const internals: HubInternals = {
       hubId: this.hubId,

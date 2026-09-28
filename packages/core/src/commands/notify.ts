@@ -10,6 +10,12 @@ export function reachable(project: ProjectRecord): AgentId[] {
     .map((e) => e.agentId);
 }
 
+/** Workers with no task in hand: the ones a newly ready task is for. */
+export function freeWorkers(project: ProjectRecord): AgentId[] {
+  const busy = new Set(Object.values(project.tasks).filter((t) => t.owner && t.status !== 'done' && t.status !== 'cancelled').map((t) => t.owner));
+  return reachable(project).filter((id) => project.roster[id]?.role === 'worker' && !busy.has(id));
+}
+
 export function displayName(project: ProjectRecord, id: string): string {
   return project.roster[id as AgentId]?.name ?? id;
 }

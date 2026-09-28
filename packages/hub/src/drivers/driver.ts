@@ -22,6 +22,8 @@ export interface DriverStart {
   /** Added to the CLI's own system prompt. */
   systemPrompt: string;
   model: string;
+  /** Reasoning effort (`--effort`); empty: the CLI's default. */
+  effort: string;
   extraArgs: string[];
   /** Resume this CLI session (after a crash or a hub restart); null starts a new one. */
   resumeSessionId: string | null;

@@ -27,15 +27,18 @@ describe('the Round Table drives each agent: next steps from the board (D3)', ()
     await t.human.call('rules.edit', { projectId, rules: { testCommand: 'sh test.sh' } });
     await t.human.call('goal.set', { projectId, goal: { objective: 'Say hello there' } });
 
-    // Nothing planned: workers are told to propose, the leader to wait.
-    expect(await next(a)).toMatchObject({ tool: 'board_propose', step: expect.stringContaining('Say hello there') });
-    expect((await next(lead)).tool).toBe('wait');
-    const { ticketId } = await a.client.call<{ ticketId: string }>('board_propose', { section: 'tasks', op: 'add', data: { title: 'Greeting', criteria: ['says hello there'] }, reason: 'goal' });
+    // Nothing planned: the leader plans the whole goal; workers wait for its plan.
+    expect(await next(lead)).toMatchObject({ tool: 'board_propose', step: expect.stringContaining('Say hello there') });
+    expect(await next(a)).toMatchObject({ tool: 'wait', step: expect.stringContaining('leader is drafting the plan') });
+    const { ticketId } = await lead.client.call<{ ticketId: string }>('board_propose', { section: 'tasks', op: 'add', data: { title: 'Greeting', criteria: ['says hello there'] }, reason: 'goal' });
+    const docs = await lead.client.call<{ ticketId: string }>('board_propose', { section: 'tasks', op: 'add', data: { title: 'Document it', criteria: ['README says hello there'], deps: [ticketId] }, reason: 'after the greeting' });
 
-    // A proposal is waiting: the leader is told exactly which one; others stop proposing.
-    expect(await next(lead)).toMatchObject({ tool: 'board_commit', step: expect.stringContaining(ticketId) });
-    expect((await next(b)).tool).toBe('wait');
-    const { committed: taskId } = await lead.client.call<{ committed: string }>('board_commit', { ticketId });
+    // The leader commits the plan in one call; a dependency given as a ticket id becomes the task.
+    expect(await next(lead)).toMatchObject({ tool: 'board_commit', step: expect.stringContaining('ticketIds') });
+    const out = await lead.client.call<{ committed: Array<{ ticketId: string; result: string }> }>('board_commit', { ticketIds: [docs.ticketId, ticketId] });
+    const taskId = out.committed.find((c) => c.ticketId === ticketId)!.result;
+    const docsTask = out.committed.find((c) => c.ticketId === docs.ticketId)!.result;
+    expect(t.hub.model.projects[projectId as never]!.tasks[docsTask as never]!.deps).toEqual([taskId]);
     expect((await next(lead)).step).toContain('human’s approval');
 
     await t.human.call('plan.approve', { projectId });
@@ -88,6 +91,6 @@ describe('the Round Table drives each agent: next steps from the board (D3)', ()
     const roster = await t.human.call<{ records: Array<{ agentId: string }> }>('board_read', { section: 'roster', projectId });
     await t.human.call('leader.assign', { projectId, agentId: roster.records[0]!.agentId });
     await settle();
-    expect(await a.call('wait', { timeoutMs: 10 })).toContain('your role changed: you are now the leader. As the leader you coordinate only');
+    expect(await a.call('wait', { timeoutMs: 10 })).toContain('your role changed: you are now the leader. As the leader you plan and coordinate');
   });
 });

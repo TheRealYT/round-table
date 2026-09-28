@@ -282,7 +282,9 @@ export const mergeResult: CommandHandler<MergeResultInput> = (model, command, ct
       mergeSha: input.mergeSha ?? null,
     }, refs),
   ];
-  const team = [cr.author, ...cr.reviews.map((r) => r.by), ...cr.testResults.map((t) => t.by), project.leaderId];
+  // Who a merge concerns: the author, the leader, and owners of tasks that were waiting on this one.
+  const waiting = Object.values(project.tasks).filter((t) => t.deps.includes(task.taskId) && t.owner).map((t) => t.owner as AgentId);
+  const team = [...new Set([cr.author, project.leaderId, ...waiting])].filter((id): id is AgentId => Boolean(id));
 
   if (input.outcome === 'merged' && input.mergeSha && input.baseSha) {
     events.push(makeEvent(ctx, HUB, where, 'change_request.merged', { changeRequestId: cr.changeRequestId, headSha: input.headSha, mergeSha: input.mergeSha, baseSha: input.baseSha }, refs));

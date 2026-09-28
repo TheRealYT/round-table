@@ -46,10 +46,12 @@ await human.call('goal.set', {
 });
 const KIND = process.env.RT_E2E_KIND ?? 'claude-code';
 const { providerId } = await human.call<{ providerId: string }>('provider.save', { settings: { kind: KIND, label: KIND, command: process.env.RT_E2E_BIN ?? '', auth: 'cli-login', model: process.env.RT_E2E_MODEL ?? '', extraArgs: [], maxInstances: 3 } });
-const spawned = await human.call<{ started: Array<{ name: string; agentId: string }>; failed: unknown[] }>('agent.spawn', { projectId, providerId, names: ['Lead', 'Ada', 'Bo'] });
+// RT_BENCH_LEGACY=1 assigns the leader after the start, as the hub had to before `leader` existed.
+const legacy = process.env.RT_BENCH_LEGACY === '1';
+const spawned = await human.call<{ started: Array<{ name: string; agentId: string }>; failed: unknown[] }>('agent.spawn', { projectId, providerId, names: ['Lead', 'Ada', 'Bo'], ...(!legacy && { leader: 'Lead' }) });
 if (spawned.failed.length) throw new Error(`spawn failed: ${JSON.stringify(spawned.failed)}`);
 const lead = spawned.started.find((s) => s.name === 'Lead')!;
-await human.call('leader.assign', { projectId, agentId: lead.agentId });
+if (legacy) await human.call('leader.assign', { projectId, agentId: lead.agentId });
 const started = Date.now();
 log(`provider ${KIND}; started ${spawned.started.map((s) => s.name).join(', ')}; Lead is leader`);
 

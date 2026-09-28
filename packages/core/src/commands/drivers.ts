@@ -1,4 +1,4 @@
-import { providerKind, type AgentId, type ProjectId, type ProviderId, type ProviderSettings } from '@round-table/protocol';
+import { providerKind, type AgentId, type ProjectId, type ProviderId, type ProviderKindDef, type ProviderSettings } from '@round-table/protocol';
 import { authorOf, HUB, inProject, makeEvent, SYSTEM } from '../event.ts';
 import { accept, reject, type CommandHandler } from '../module.ts';
 import type { Model } from '../model.ts';
@@ -43,6 +43,10 @@ export const spawnAgent: CommandHandler<{
   tags: string[];
   publicKey: string;
   fingerprint: string;
+  /** Start it as the project's leader, so its first turn already plans (no worker turn first). */
+  leader?: boolean;
+  model?: string;
+  effort?: string;
 }> = (model, command, ctx) => {
   const { projectId, providerId, name, tags, publicKey, fingerprint } = command.input;
   const project = model.projects[projectId];
@@ -59,14 +63,24 @@ export const spawnAgent: CommandHandler<{
   if (running >= provider.settings.maxInstances) {
     return reject('instance_limit', `${provider.settings.label} already runs ${running} of ${provider.settings.maxInstances} agents; stop one or raise the limit`);
   }
+  const badEffort = effortProblem(kind, command.input.effort ?? '');
+  if (badEffort) return reject('invalid_input', badEffort);
   const taken = Object.values(project.roster).some((r) => r.name.toLowerCase() === name.toLowerCase() && r.state !== 'removed' && r.state !== 'left');
   if (taken) return reject('name_taken', `an agent named ${name} is already in this project`);
   const agentId = ctx.ids.next('agent') as AgentId;
   const author = authorOf(command.principal);
+  const leader = command.input.leader === true;
+  const where = inProject(projectId);
   return accept(
     [
-      makeEvent(ctx, author, SYSTEM, 'agent.provisioned', { agentId, projectId, providerId, name, tags, publicKey, fingerprint }),
-      makeEvent(ctx, author, inProject(projectId), 'roster.joined', { agentId, name, role: 'worker', tags, capabilities: [], client: provider.settings.kind }),
+      makeEvent(ctx, author, SYSTEM, 'agent.provisioned', { agentId, projectId, providerId, name, tags, publicKey, fingerprint, ...(command.input.model && { model: command.input.model }), ...(command.input.effort && { effort: command.input.effort }) }),
+      makeEvent(ctx, author, where, 'roster.joined', { agentId, name, role: leader ? 'leader' : 'worker', tags, capabilities: [], client: provider.settings.kind }),
+      ...(leader
+        ? [
+            ...(project.leaderId ? [makeEvent(ctx, author, where, 'roster.role_changed', { agentId: project.leaderId, role: 'worker' })] : []),
+            makeEvent(ctx, author, SYSTEM, 'leader.assigned', { projectId, agentId, previous: project.leaderId }),
+          ]
+        : []),
       makeEvent(ctx, author, SYSTEM, 'agent.run_requested', { agentId, run: true }),
     ],
     { agentId },
@@ -114,4 +128,22 @@ function missingCredentials(provider: Model['providers'][ProviderId]): string | 
 
 function runningFrom(model: Readonly<Model>, providerId: ProviderId): number {
   return Object.values(model.agents).filter((a) => a.driven?.providerId === providerId && a.driven.run && !a.revoked).length;
+}
+
+/** A hub-run agent's own model and effort (empty strings: the provider's). */
+export const configureAgent: CommandHandler<{ projectId: ProjectId; agentId: AgentId; model: string; effort: string }> = (model, command, ctx) => {
+  const agent = model.agents[command.input.agentId];
+  if (!agent?.driven || agent.projectId !== command.input.projectId) return reject('unknown_agent', 'no agent the hub runs with that id in this project');
+  const provider = model.providers[agent.driven.providerId];
+  const problem = effortProblem(provider ? providerKind(provider.settings.kind) : undefined, command.input.effort);
+  if (problem) return reject('invalid_input', problem);
+  const { model: m, effort } = command.input;
+  if (m === agent.driven.model && effort === agent.driven.effort) return accept([]);
+  return accept([makeEvent(ctx, authorOf(command.principal), SYSTEM, 'agent.configured', { agentId: agent.agentId, model: m, effort })]);
+};
+
+function effortProblem(kind: ProviderKindDef | undefined, effort: string): string | null {
+  if (!effort) return null;
+  if (!kind || kind.efforts.length === 0) return `${kind?.label ?? 'this CLI'} has no effort levels`;
+  return kind.efforts.includes(effort) ? null : `effort must be one of ${kind.efforts.join(', ')}`;
 }

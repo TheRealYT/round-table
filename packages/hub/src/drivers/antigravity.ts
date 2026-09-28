@@ -50,6 +50,7 @@ export class AntigravityDriver implements Driver {
         '--dangerously-skip-permissions',
         ...(conversation ? ['--conversation', conversation] : []),
         ...(options.model ? ['--model', options.model] : []),
+        ...(options.effort ? ['--effort', options.effort] : []),
         ...options.extraArgs,
       ];
       const child = spawn(bin, args, { cwd: options.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });

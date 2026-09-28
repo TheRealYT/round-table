@@ -1,5 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Sha } from '@round-table/protocol';
@@ -52,19 +54,34 @@ export class LocalGitHost implements GitHost {
       .map((l) => l.slice('branch refs/heads/'.length));
   }
 
+  /**
+   * One merge worktree per repository, kept between merges (the merge reactor runs them one at a
+   * time per repo). Tracked files are reset each time; ignored ones (node_modules, build caches)
+   * stay, so the hub's check run doesn't reinstall everything for every change.
+   */
+  private mergePath(repoPath: string): string {
+    return join(this.scratchRoot, `rt-merge-${createHash('sha256').update(repoPath).digest('hex').slice(0, 12)}`);
+  }
+
   async mergeInScratch(repoPath: string, baseBranch: string, headSha: Sha, message: string): Promise<MergeAttempt> {
     const baseSha = await this.resolveBranch(repoPath, baseBranch);
     if (!baseSha) return { ok: false, reason: 'missing_ref', ref: baseBranch };
-    const scratchPath = await mkdtemp(join(this.scratchRoot, 'rt-merge-'));
-    await rm(scratchPath, { recursive: true, force: true });
-    const added = await git(repoPath, ['worktree', 'add', '--detach', scratchPath, baseSha]);
-    if (added.code !== 0) throw new Error(`git worktree add failed: ${added.stderr}`);
+    const scratchPath = this.mergePath(repoPath);
+    const reusable = existsSync(join(scratchPath, '.git')) && (await git(scratchPath, ['checkout', '--detach', '--force', '-q', baseSha])).code === 0;
+    if (!reusable) {
+      await rm(scratchPath, { recursive: true, force: true });
+      await git(repoPath, ['worktree', 'prune']);
+      const added = await git(repoPath, ['worktree', 'add', '--detach', scratchPath, baseSha]);
+      if (added.code !== 0) throw new Error(`git worktree add failed: ${added.stderr}`);
+    }
     const merged = await git(scratchPath, [...HUB_IDENTITY, 'merge', '--no-ff', '--no-edit', '-m', message, headSha]);
     if (merged.code !== 0) {
       const conflicts = await git(scratchPath, ['diff', '--name-only', '--diff-filter=U']);
       await this.removeScratch(repoPath, scratchPath);
       return { ok: false, reason: 'conflict', baseSha, files: conflicts.stdout.split('\n').filter(Boolean) };
     }
+    // Leftovers of earlier runs go, except what the merged tree ignores (installed dependencies).
+    if (reusable) await git(scratchPath, ['clean', '-fdq']);
     const head = await git(scratchPath, ['rev-parse', 'HEAD']);
     return { ok: true, mergeSha: head.stdout.trim() as Sha, baseSha, scratchPath };
   }
@@ -75,6 +92,12 @@ export class LocalGitHost implements GitHost {
   }
 
   async removeScratch(repoPath: string, scratchPath: string): Promise<void> {
+    if (scratchPath === this.mergePath(repoPath)) {
+      // Kept for the next merge: just undo this one.
+      await git(scratchPath, ['merge', '--abort']);
+      await git(scratchPath, ['reset', '--hard', '-q']);
+      return;
+    }
     await git(repoPath, ['worktree', 'remove', '--force', scratchPath]);
     await rm(scratchPath, { recursive: true, force: true });
     await git(repoPath, ['worktree', 'prune']);

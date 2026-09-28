@@ -10,8 +10,8 @@ import {
 } from '@round-table/protocol';
 import { z } from 'zod';
 import { authorOf, inProject, makeEvent, type Author } from '../event.ts';
-import { accept, reject, type CommandHandler, type Decision } from '../module.ts';
-import type { EntryRecord, ProjectRecord } from '../model.ts';
+import { accept, reject, type Command, type CommandHandler, type Decision } from '../module.ts';
+import type { EntryRecord, Model, ProjectRecord } from '../model.ts';
 import type { Ctx } from '../ports.ts';
 import { openOrRefreshChangeRequest } from './changes.ts';
 import { displayName, hubMessage, reachable } from './notify.ts';
@@ -95,7 +95,10 @@ function validateProposal(
     if (input.op !== 'add') return fail('invalid_op', 'tasks accept only op "add"; state changes use claim, release and the review flow');
     const parsed = TaskProposal.safeParse(input.data);
     if (!parsed.success) return fail('invalid_data', z.prettifyError(parsed.error));
-    for (const dep of parsed.data.deps) if (!project.tasks[dep]) return fail('unknown_task', `dependency ${dep} does not exist`);
+    for (const dep of parsed.data.deps) {
+      const ticket = project.tickets[dep as TicketId];
+      if (!project.tasks[dep as TaskId] && !(ticket?.section === 'tasks' && ticket.status !== 'rejected')) return fail('unknown_task', `dependency ${dep} is neither a task nor a proposed task`);
+    }
     return { ok: true, data: parsed.data, targetId: null };
   }
   if (!['add', 'update', 'supersede'].includes(input.op)) return fail('invalid_op', 'documents accept op "add", "update" or "supersede"');
@@ -157,17 +160,56 @@ export function versionEntry(
 function sectionNotice(ctx: Ctx, project: ProjectRecord, section: string, summary: string, ref: string, urgent = false): PendingEvent[] {
   const def = getSection(section);
   if (!def) return [];
-  const priority = urgent ? 'critical' : def.notify.priority;
+  // "Affected" agents aren't resolved yet (S3): everyone gets it, but as a normal FYI that rides
+  // along with their next turn instead of waking the whole team.
+  const affectedOnly = def.notify.audience.includes('affected') && !def.notify.audience.includes('everyone');
+  const priority = urgent ? 'critical' : affectedOnly ? 'normal' : def.notify.priority;
   const everyone = def.notify.audience.includes('everyone') || def.notify.audience.includes('affected');
   const to = everyone ? reachable(project) : def.notify.audience.includes('leader') ? [project.leaderId] : [];
   return hubMessage(ctx, project.projectId, to, { priority, type: 'alert', body: summary, ref });
 }
 
-export const commit: CommandHandler<{ ticketId: TicketId; evidence: string[] }> = (model, command, ctx) => {
+/**
+ * The leader commits one ticket, or a whole plan at once (`ticketIds`): one turn instead of one per
+ * task. Tasks in the batch may depend on each other by ticket id.
+ */
+export const commit: CommandHandler<{ ticketId?: TicketId; ticketIds?: TicketId[]; evidence: string[] }> = (model, command, ctx) => {
+  const ids = [...new Set([...(command.input.ticketIds ?? []), ...(command.input.ticketId ? [command.input.ticketId] : [])])];
+  if (ids.length === 0) return reject('invalid_input', 'give ticketId or ticketIds');
+  if (ids.length === 1) return commitOne(model, command, ctx, ids[0]!, new Map());
+  const made = new Map<string, string>();
+  const events: PendingEvent[] = [];
+  const committed: Array<{ ticketId: string; result: string }> = [];
+  const rejected: Array<{ ticketId: string; code: string; message: string }> = [];
+  // Order so a task comes after the tickets it depends on.
+  const pending = [...ids];
+  let progress = true;
+  while (pending.length > 0 && progress) {
+    progress = false;
+    for (const id of [...pending]) {
+      const deps = ((model.projects[(command.principal as { projectId: ProjectId }).projectId]?.tickets[id]?.data as { deps?: string[] } | undefined)?.deps ?? []);
+      if (deps.some((d) => pending.includes(d as TicketId) && d !== id)) continue;
+      pending.splice(pending.indexOf(id), 1);
+      progress = true;
+      const decision = commitOne(model, command, ctx, id, made);
+      events.push(...decision.events);
+      if (decision.ok) {
+        const result = (decision.output as { committed: string }).committed;
+        made.set(id, result);
+        committed.push({ ticketId: id, result });
+      } else rejected.push({ ticketId: id, code: decision.rejection.code, message: decision.rejection.message });
+    }
+  }
+  for (const id of pending) rejected.push({ ticketId: id, code: 'dependency_cycle', message: 'its dependencies form a cycle' });
+  if (committed.length === 0) return reject(rejected[0]!.code, rejected[0]!.message, { rejected }, events);
+  return accept(events, { committed, rejected });
+};
+
+function commitOne(model: Readonly<Model>, command: Command<{ evidence: string[] }>, ctx: Ctx, ticketId: TicketId, made: ReadonlyMap<string, string>): Decision {
   const principal = command.principal;
   if (principal.kind !== 'leader') return reject('forbidden', 'leader only');
   const project = model.projects[principal.projectId];
-  const ticket = project?.tickets[command.input.ticketId];
+  const ticket = project?.tickets[ticketId];
   if (!project || !ticket) return reject('unknown_ticket', 'no such ticket');
   if (ticket.status !== 'open') return reject('ticket_closed', `ticket is already ${ticket.status}`);
   const author = authorOf(principal);
@@ -210,7 +252,8 @@ export const commit: CommandHandler<{ ticketId: TicketId; evidence: string[] }> 
         criteria: task.criteria,
         reviewer: task.reviewer ?? null,
         tester: task.tester ?? null,
-        deps: task.deps,
+        // A dep given as a ticket id becomes the task that ticket was committed as.
+        deps: task.deps.map((d) => (made.get(d) ?? project.tickets[d as TicketId]?.result ?? d) as TaskId).filter((d) => d.startsWith('tsk_')),
         capabilities: task.capabilities,
         ticketId: ticket.ticketId,
         proposer: ticket.proposer,
@@ -235,10 +278,11 @@ export const commit: CommandHandler<{ ticketId: TicketId; evidence: string[] }> 
     makeEvent(ctx, author, where, 'ticket.committed', { ticketId: ticket.ticketId, by: principal.agentId, result }),
     ...(ticket.proposer === principal.agentId
       ? []
-      : hubMessage(ctx, project.projectId, [ticket.proposer], { priority: 'direct', type: 'response', ref: ticket.ticketId, body: `Your proposal ${ticket.ticketId} was committed as ${result}.` })),
+      // An FYI: nothing to do, so it rides along with the proposer's next turn.
+      : hubMessage(ctx, project.projectId, [ticket.proposer], { priority: 'normal', type: 'response', ref: ticket.ticketId, body: `Your proposal ${ticket.ticketId} was committed as ${result}.` })),
   );
   return accept(events, { committed: result });
-};
+}
 
 export const rejectTicket: CommandHandler<{ ticketId: TicketId; reason: string }> = (model, command, ctx) => {
   const principal = command.principal;
@@ -250,7 +294,7 @@ export const rejectTicket: CommandHandler<{ ticketId: TicketId; reason: string }
   return accept([
     makeEvent(ctx, authorOf(principal), inProject(project.projectId), 'ticket.rejected', { ticketId: ticket.ticketId, by: principal.agentId, reason: command.input.reason, stale: false }),
     ...hubMessage(ctx, project.projectId, [ticket.proposer], {
-      priority: 'direct',
+      priority: 'normal',
       type: 'response',
       ref: ticket.ticketId,
       body: `The leader rejected your proposal ${ticket.ticketId}: ${command.input.reason}`,
