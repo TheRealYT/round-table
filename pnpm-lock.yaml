@@ -84,6 +84,9 @@ importers:
       '@round-table/agent':
         specifier: workspace:*
         version: link:../agent
+      '@round-table/core':
+        specifier: workspace:*
+        version: link:../core
       '@round-table/hub':
         specifier: workspace:*
         version: link:../hub

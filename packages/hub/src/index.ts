@@ -20,3 +20,4 @@ export * from './drivers/claude-code.ts';
 export { translate as translateClaudeEvent } from './drivers/claude-code.ts';
 export * from './drivers/antigravity.ts';
 export { agentEnv, detectBinary } from './drivers/process.ts';
+export * from './insights.ts';

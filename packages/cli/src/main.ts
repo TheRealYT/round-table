@@ -8,6 +8,7 @@ import { parseArgs } from 'node:util';
 import { CLIENTS, clientProfile, createAgentWorktree, FileKeyStore, installAgent, rtHome, runAgentStdio } from '@round-table/agent';
 import { createHttpServer, FileSecretStore, Hub, loadOrCreateHubKey } from '@round-table/hub';
 import { FolderAgentHost } from './agent-host.ts';
+import { report } from './report.ts';
 import { WsConnector, WsListener } from '@round-table/protocol/ws';
 import { randomToken } from '@round-table/protocol/crypto';
 
@@ -21,6 +22,7 @@ const COMMANDS: Record<string, { slice: string; usage: string; summary: string }
   demo: { slice: 'S1', usage: '[--dir <path>] [--client <id>] [--agents lead,ada,bo]', summary: 'Create a sample repo and one worktree per agent, installed for a client, and print what to do next.' },
   'agent run': { slice: 'S1', usage: '[--slot <name>] [--client <id>] [--hub <url>] [--wait-max-ms <n>] [--tools dynamic|static] [--driven]', summary: 'Run rt-agent on stdio (what an agent\'s MCP client starts).' },
   'agent install': { slice: 'S1', usage: '--client <id> [--slot <name>] [--dir <path>] [--repo <path> [--main <branch>]] [--hub <url>]', summary: `Write <dir>'s MCP config for a client so it runs rt-agent. Clients: ${Object.keys(CLIENTS).join(', ')}.` },
+  report: { slice: 'S1', usage: '[--project <name|id>] [--data <dir> | --db <file>] [--json]', summary: 'Where a project\'s time went: task phases, agent turns and what started them, hub checks, messages. Reads the hub database; works while the hub runs.' },
   hook: { slice: 'S6', usage: 'pre-tool-use | post-tool-use', summary: 'Hook adapter entry point, called by the agent client.' },
   supervise: { slice: 'S4', usage: '', summary: 'Restart dead agent sessions (D3).' },
 };
@@ -168,6 +170,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case 'agent install':
       agentInstall(args);
+      return 0;
+    case 'report':
+      report(args);
       return 0;
     default:
       console.error(`rt ${name}: not built yet (slice ${COMMANDS[name]?.slice}).`);

@@ -1,4 +1,4 @@
-import { nextStep, type Model, type ProviderRecord } from '@round-table/core';
+import { nextStep, type Model, type ProviderRecord, type TurnTrigger } from '@round-table/core';
 import { providerKind, type AgentId, type EventRow, type MessageEnvelope, type Principal, type ProjectId, type RunStatus } from '@round-table/protocol';
 import type { KeyPair } from '@round-table/protocol/crypto';
 import type { Bus } from './command-bus.ts';
@@ -84,6 +84,8 @@ interface Live extends LiveState {
   generation: number;
   /** Hub notices for the next turn (e.g. a role change), ahead of messages. */
   notices: string[];
+  /** What the messages taken for the next turn were, for the turn's trigger (insights). */
+  taken: TurnTrigger | null;
 }
 
 export interface SupervisorOptions {
@@ -207,7 +209,7 @@ export class Supervisor {
   private entry(agentId: string): Live {
     let live = this.live.get(agentId);
     if (!live) {
-      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0, notices: [] };
+      live = { status: 'stopped', since: this.o.now(), lastError: null, tool: null, proc: undefined, handed: [], turnStartedAt: 0, lastStep: null, sameStep: 0, restarts: 0, restartTimer: undefined, generation: 0, notices: [], taken: null };
       this.live.set(agentId, live);
     }
     return live;
@@ -254,7 +256,7 @@ export class Supervisor {
       live.lastStep = null;
       live.sameStep = 0;
       this.note(agentId, 'status', resumed ? 'started (resuming its conversation)' : 'started');
-      this.sendTurn(agentId, live, this.kickoff(agentId, resumed));
+      this.sendTurn(agentId, live, this.kickoff(agentId, resumed), 'kickoff');
     } catch (error) {
       if (generation !== live.generation) return;
       live.proc = undefined;
@@ -337,13 +339,15 @@ export class Supervisor {
   private pump(agentId: string, live: Live): void {
     const agent = this.o.model.agents[agentId as AgentId];
     if (!agent) return;
-    const messages = [...live.notices.splice(0), this.takeMessages(agentId, live)].filter(Boolean).join('\n') || undefined;
+    const notices = live.notices.splice(0);
+    const taken = this.takeMessages(agentId, live);
+    const messages = [...notices, taken].filter(Boolean).join('\n') || undefined;
     const step = nextStep(this.o.model, agent.projectId, agent.agentId);
     if (messages) {
       // Messages, then what the board wants next, so the turn ends with a clear step.
       live.lastStep = step.tool === 'wait' ? null : step.step;
       live.sameStep = step.tool === 'wait' ? 0 : 1;
-      this.sendTurn(agentId, live, `${messages}\n\n${nextLine(step)}`);
+      this.sendTurn(agentId, live, `${messages}\n\n${nextLine(step)}`, taken ? (live.taken ?? 'agent') : 'notice');
       return;
     }
     if (step.tool === 'wait') {
@@ -357,7 +361,7 @@ export class Supervisor {
       live.lastStep = step.step;
       live.sameStep = 1;
     }
-    this.sendTurn(agentId, live, `[Round Table] next: ${step.step}`);
+    this.sendTurn(agentId, live, `[Round Table] next: ${step.step}`, 'nudge');
   }
 
   private kickoff(agentId: string, resumed: boolean): string {
@@ -389,6 +393,7 @@ export class Supervisor {
     const { items, more } = pendingDeliveries(this.o.store.reader, agentId, this.o.maxChars);
     if (items.length === 0) return undefined;
     live.handed = items.map((d) => d.deliveryId);
+    live.taken = strongest(items.map((d) => d.message));
     const agent = this.o.model.agents[agentId as AgentId];
     const project = agent ? this.o.model.projects[agent.projectId as ProjectId] : undefined;
     const who = (m: MessageEnvelope) => (m.role === 'human' ? 'the human' : m.role === 'hub' ? 'the hub' : (project?.roster[m.from as AgentId]?.name ?? m.from));
@@ -398,10 +403,11 @@ export class Supervisor {
     return lines.join('\n');
   }
 
-  private sendTurn(agentId: string, live: Live, text: string): void {
+  private sendTurn(agentId: string, live: Live, text: string, trigger: TurnTrigger): void {
     if (!live.proc) return;
     live.turnStartedAt = this.o.now();
-    this.note(agentId, 'to_agent', text);
+    live.taken = null;
+    this.note(agentId, 'to_agent', text, { trigger });
     this.setStatus(live, 'working');
     live.proc.send(text);
     void agentId;
@@ -440,4 +446,13 @@ function systemPrompt(name: string): string {
 The Round Table runs this session. Messages from the hub, the human and other agents arrive as user turns whose lines start with "[Round Table]". Act on them through the roundtable MCP tools (board, tasks, messages, requests) and in the current folder, which is your own git worktree.
 When nothing needs you, end your turn: the Round Table wakes you when something arrives. Never wait, poll or sleep for messages, and don't call the wait tool.
 The human's messages outrank everything. Talk to the team only through Round Table tools; the human reads the board and messages in the Round Table app.`;
+}
+
+/** What woke an agent, from the messages it was handed: the most urgent sender wins. */
+function strongest(messages: MessageEnvelope[]): TurnTrigger {
+  if (messages.some((m) => m.role === 'human' || m.priority === 'human')) return 'human';
+  if (messages.some((m) => m.priority === 'critical')) return 'critical';
+  if (messages.some((m) => m.role !== 'hub' && m.to !== 'all')) return 'agent';
+  if (messages.some((m) => m.role === 'hub')) return 'hub';
+  return 'broadcast';
 }

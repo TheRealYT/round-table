@@ -6,6 +6,7 @@ import {
   type EventRow,
   type PairingId,
   type PrincipalKind,
+  type ProjectId,
   type ProviderId,
   type StreamId,
   PROVIDER_KINDS,
@@ -21,6 +22,7 @@ import {
 } from '@round-table/protocol/crypto';
 import { INTERNAL_COMMANDS, nextStep, type ProjectRecord } from '@round-table/core';
 import { boardGet, boardRead, boardView } from './board-queries.ts';
+import { projectInsights } from './insights.ts';
 import type { HubInternals } from './internals.ts';
 import { ackDeliveries, pendingDeliveries } from './projectors/deliveries.ts';
 import { agentOf, RpcError, type Session } from './session.ts';
@@ -131,6 +133,10 @@ export class Router {
       'agent.interrupt': (session, input: { projectId: string; agentId: string }) => {
         this.drivenIn(session, input.projectId, input.agentId);
         return { ok: hub.supervisor?.interrupt(input.agentId) ?? false };
+      },
+      'project.insights': (_session, input: { projectId: string }) => {
+        if (!hub.model.projects[input.projectId as ProjectId]) throw new RpcError('rejected', 'no such project');
+        return projectInsights(hub.store.reader, input.projectId);
       },
       'agent.transcript': (session, input: { projectId: string; agentId: string; after: number; limit: number }) => {
         this.drivenIn(session, input.projectId, input.agentId);
